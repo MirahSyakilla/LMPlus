@@ -94,6 +94,23 @@ export async function setAccountOrder(order: string[]): Promise<void> {
   return invoke("set_account_order", { order });
 }
 
+// --- Account operations ---
+export async function switchAccount(basePath: string, account: string): Promise<void> {
+  return invoke("switch_account", { basePath, account });
+}
+
+export async function addAccount(basePath: string, name: string): Promise<void> {
+  return invoke("add_account", { basePath, name });
+}
+
+export async function renameAccount(basePath: string, oldName: string, newName: string): Promise<void> {
+  return invoke("rename_account", { basePath, oldName, newName });
+}
+
+export async function deleteAccount(basePath: string, name: string): Promise<void> {
+  return invoke("delete_account", { basePath, name });
+}
+
 // --- Hotkeys ---
 export async function getHotkeySettings(): Promise<Record<string, string>> {
   return invoke("get_hotkey_settings");

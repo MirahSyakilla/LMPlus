@@ -1,7 +1,8 @@
-use aes::cipher::{BlockEncryptMut, KeyIvInit};
+use aes::cipher::block_padding::Pkcs7;
+use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use base64::Engine;
 use hmac::Mac;
-use sha2::Digest;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -9,8 +10,6 @@ type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
 const SERVER_PUBKEY_PEM: &str = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA785rTbA9EYjsITD0kjnx\nYAO9+lYcH836cdn9YsByxdG6/WYJqByL4ZPSOS3nCSTTl+NGUnSnffUs1Da6R6OU\nVpBpu9KdIrfPv4RWPZk2a9pcOqDC/bqcQ1deJWpUGDLjxzrkuXhxjXigg2jroGwY\nNLrE4KpHRcsQIpPubApambBSANjVNfWMlo42dm7sJg671xuuxwPz5+CxHo3vRDDp\n0whqDhn+e/nOV4rpxOb+z/XdA2iWJ9uj+dYXVwzWjkYNrzZz8ob14zSSeqURpzDK\nQJ6oT6quWu9vrZT+H9DZ5NGg0MAZ2gnc7Un/pBnobhCqgbRtaZGZ0nrvgWGFNM2z\niwIDAQAB\n-----END PUBLIC KEY-----";
-
-const EXPECTED_CERT_FINGERPRINT: &str = "9WnQ120j8QqeMZy/nOzmGRn963JzbazjPclS6eZ5Ogk=";
 
 const VERIFY_URL: &str = "https://lmp.nobullypls.site/verify";
 
@@ -36,16 +35,16 @@ fn aes_encrypt(data: &[u8], key_hex: &str) -> Result<String, String> {
 
     let cipher = Aes256CbcEnc::new(key.as_slice().into(), &iv.into());
     let mut buffer = data.to_vec();
-    let padding_len = 16 - (buffer.len() % 16);
-    buffer.resize(buffer.len() + padding_len, padding_len as u8);
+    let data_len = buffer.len();
+    buffer.resize(data_len + 16, 0);
 
-    let ciphertext = cipher
-        .encrypt_padded_vec_mut(&buffer)
-        .map_err(|e| format!("Encryption failed: {}", e))?;
+    let ct = cipher
+        .encrypt_padded_mut::<Pkcs7>(&mut buffer, data_len)
+        .map_err(|e| format!("Encryption failed: {:?}", e))?;
 
-    let mut combined = Vec::with_capacity(16 + ciphertext.len());
+    let mut combined = Vec::with_capacity(16 + ct.len());
     combined.extend_from_slice(&iv);
-    combined.extend_from_slice(&ciphertext);
+    combined.extend_from_slice(ct);
 
     Ok(base64::engine::general_purpose::STANDARD.encode(&combined))
 }
@@ -65,13 +64,14 @@ fn aes_decrypt(data_b64: &str, key_hex: &str) -> Result<Vec<u8>, String> {
 
     let cipher = Aes256CbcDec::new(key.as_slice().into(), iv.into());
     let mut buffer = ciphertext.to_vec();
-    cipher
-        .decrypt_padded_vec_mut(&mut buffer)
-        .map_err(|e| format!("Decryption failed: {}", e))
+    let pt = cipher
+        .decrypt_padded_mut::<Pkcs7>(&mut buffer)
+        .map_err(|e| format!("Decryption failed: {:?}", e))?;
+
+    Ok(pt.to_vec())
 }
 
 fn read_config() -> BTreeMap<String, BTreeMap<String, String>> {
-    use std::collections::BTreeMap;
     let path = config_path().unwrap_or_default();
     let content = fs::read_to_string(&path).unwrap_or_default();
     let mut map: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
@@ -96,7 +96,6 @@ fn read_config() -> BTreeMap<String, BTreeMap<String, String>> {
 }
 
 fn write_config(map: &BTreeMap<String, BTreeMap<String, String>>) -> Result<(), String> {
-    use std::collections::BTreeMap;
     let path = config_path()?;
     let mut content = String::new();
     for (section, keys) in map {
@@ -109,11 +108,12 @@ fn write_config(map: &BTreeMap<String, BTreeMap<String, String>>) -> Result<(), 
     fs::write(&path, content).map_err(|e| format!("Failed to write config: {}", e))
 }
 
-use std::collections::BTreeMap;
-
-fn compute_config_signature(map: &BTreeMap<String, BTreeMap<String, String>>, fingerprint: &str) -> String {
+fn compute_config_signature(
+    map: &BTreeMap<String, BTreeMap<String, String>>,
+    fingerprint: &str,
+) -> String {
     let mut content = String::new();
-    for (section, keys) in map {
+    for keys in map.values() {
         for (k, v) in keys {
             if k == "config_signature" {
                 continue;
@@ -129,8 +129,8 @@ fn compute_config_signature(map: &BTreeMap<String, BTreeMap<String, String>>, fi
 
 fn verify_config_signature(fingerprint: &str) -> Result<bool, String> {
     let map = read_config();
-    let license = map.get("license");
-    let stored_sig = license
+    let stored_sig = map
+        .get("license")
         .and_then(|l| l.get("config_signature"))
         .cloned()
         .unwrap_or_default();
@@ -141,7 +141,10 @@ fn verify_config_signature(fingerprint: &str) -> Result<bool, String> {
     Ok(computed == stored_sig)
 }
 
-fn sign_config(map: &mut BTreeMap<String, BTreeMap<String, String>>, fingerprint: &str) {
+fn sign_config(
+    map: &mut BTreeMap<String, BTreeMap<String, String>>,
+    fingerprint: &str,
+) {
     let sig = compute_config_signature(map, fingerprint);
     map.entry("license".to_string())
         .or_default()
@@ -149,8 +152,8 @@ fn sign_config(map: &mut BTreeMap<String, BTreeMap<String, String>>, fingerprint
 }
 
 fn verify_server_signature(payload: &str, sig_b64: &str) -> Result<bool, String> {
-    use rsa::pkcs1::DecodeRsaPublicKey;
-    use rsa::signature::Verifier;
+    use rsa::pkcs8::DecodePublicKey;
+    use rsa::traits::SignatureScheme;
     use rsa::Pkcs1v15Sign;
 
     let pub_key = rsa::RsaPublicKey::from_public_key_pem(SERVER_PUBKEY_PEM)
@@ -160,15 +163,33 @@ fn verify_server_signature(payload: &str, sig_b64: &str) -> Result<bool, String>
         .decode(sig_b64)
         .map_err(|e| format!("Failed to decode signature: {}", e))?;
 
-    let verifying_key = Pkcs1v15Sign::new::<sha2::Sha256>();
-    verifying_key
-        .verify(pub_key.as_ref(), payload.as_bytes(), &sig)
+    let scheme = Pkcs1v15Sign::new::<sha2::Sha256>();
+    scheme
+        .verify(&pub_key, payload.as_bytes(), &sig)
         .map(|_| true)
         .map_err(|e| format!("Signature verification failed: {}", e))
 }
 
+fn urlencode(s: &str) -> String {
+    let mut result = String::new();
+    for byte in s.as_bytes() {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(*byte as char);
+            }
+            _ => {
+                result.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    result
+}
+
 #[tauri::command]
-pub async fn verify_license(key: String, fingerprint: String) -> Result<serde_json::Value, String> {
+pub async fn verify_license(
+    key: String,
+    fingerprint: String,
+) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
@@ -177,8 +198,8 @@ pub async fn verify_license(key: String, fingerprint: String) -> Result<serde_js
     let url = format!(
         "{}?k={}&d={}&v=2",
         VERIFY_URL,
-        urlencoding(&key),
-        urlencoding(&fingerprint)
+        urlencode(&key),
+        urlencode(&fingerprint)
     );
 
     let resp = client
@@ -224,7 +245,10 @@ pub async fn verify_license(key: String, fingerprint: String) -> Result<serde_js
         license.insert("ek".to_string(), encrypted);
         license.insert("exp".to_string(), exp.to_string());
         license.insert("token".to_string(), token.to_string());
-        license.insert("last_attempt".to_string(), chrono::Utc::now().to_rfc3339());
+        license.insert(
+            "last_attempt".to_string(),
+            chrono::Utc::now().to_rfc3339(),
+        );
         license.insert("attempt_count".to_string(), "0".to_string());
         sign_config(&mut map, &fingerprint);
         write_config(&map)?;
@@ -276,19 +300,4 @@ pub fn load_saved_license(fingerprint: String) -> Result<serde_json::Value, Stri
 #[tauri::command]
 pub fn get_config_signature_status(fingerprint: String) -> Result<bool, String> {
     verify_config_signature(&fingerprint)
-}
-
-fn urlencoding(s: &str) -> String {
-    let mut result = String::new();
-    for byte in s.as_bytes() {
-        match *byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                result.push(*byte as char);
-            }
-            _ => {
-                result.push_str(&format!("%{:02X}", byte));
-            }
-        }
-    }
-    result
 }

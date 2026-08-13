@@ -2087,7 +2087,6 @@ dependencies = [
  "log",
  "once_cell",
  "pem",
- "pkcs8",
  "rand 0.8.7",
  "reqwest 0.12.28",
  "rsa",

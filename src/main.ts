@@ -193,8 +193,7 @@ async function refreshAccounts() {
 
 async function switchAccount(name: string) {
   try {
-    await api.restartGame(exePath, processName, false);
-    await refreshAccounts();
+    await api.switchAccount(basePath, name);
     await api.restartGame(exePath, processName, true);
   } catch (e) {
     alert(`Failed to switch account: ${e}`);
@@ -203,11 +202,9 @@ async function switchAccount(name: string) {
 
 async function renameAccount(oldName: string) {
   const newName = prompt("Enter new account name:", oldName);
-  if (newName && newName !== oldName) {
+  if (newName && newName.trim() && newName !== oldName) {
     try {
-      // Rename the directory via backend
-      // We need to add this command... but for now use a workaround
-      alert("Rename not yet implemented in Rust backend. Please rename the folder manually.");
+      await api.renameAccount(basePath, oldName, newName.trim());
       await refreshAccounts();
     } catch (e) {
       alert(`Failed to rename: ${e}`);
@@ -218,7 +215,7 @@ async function renameAccount(oldName: string) {
 async function deleteAccount(name: string) {
   if (confirm(`Confirm delete '${name}'?`)) {
     try {
-      alert("Delete not yet implemented in Rust backend. Please delete the folder manually.");
+      await api.deleteAccount(basePath, name);
       await refreshAccounts();
     } catch (e) {
       alert(`Failed to delete: ${e}`);
@@ -248,9 +245,7 @@ function showAddAccountDialog() {
     }
     closeModal(overlay);
     try {
-      // The original code copies userdata -> Accounts/<name>
-      // We need backend support for this
-      alert("Add account will copy userdata. Not yet implemented in Rust backend.");
+      await api.addAccount(basePath, name);
       await refreshAccounts();
     } catch (e) {
       alert(`Error: ${e}`);
@@ -260,10 +255,16 @@ function showAddAccountDialog() {
 
 // --- Hotkey dialog ---
 let currentHotkeyTab = 0;
-let recordingRow = -1;
-let recordingTable = 0;
+let hotkeyDialogOverlay: HTMLElement | null = null;
+
+interface HotkeyRow {
+  name: string;
+  hotkey: string;
+}
 
 async function showHotkeyDialog() {
+  if (hotkeyDialogOverlay) hotkeyDialogOverlay.remove();
+
   const content = document.createElement("div");
 
   const tabs = ["Account", "Formation", "Misc"];
@@ -276,104 +277,202 @@ async function showHotkeyDialog() {
     tab.addEventListener("click", () => {
       currentHotkeyTab = i;
       showHotkeyDialog();
-      closeModal(document.querySelector(".modal-overlay")!);
     });
     tabBar.appendChild(tab);
   });
   content.appendChild(tabBar);
 
+  if (currentHotkeyTab === 2) {
+    const warn = document.createElement("div");
+    warn.style.cssText = "color:red; font-size:12px; margin-bottom:6px;";
+    warn.textContent = "Set Lords Mobile to the lowest resolution before configuring macros!";
+    content.appendChild(warn);
+  }
+
   const table = document.createElement("table");
   table.className = "hotkey-table";
-  table.innerHTML = "<thead><tr><th>Name</th><th>Hotkey</th></tr></thead><tbody></tbody>";
+  table.innerHTML =
+    `<thead><tr><th>${currentHotkeyTab === 1 ? "Formation" : currentHotkeyTab === 2 ? "Name" : "Account"}</th><th>Hotkey</th></tr></thead><tbody></tbody>`;
   content.appendChild(table);
-
   const tbody = table.querySelector("tbody")!;
 
-  if (currentHotkeyTab === 0) {
-    try {
+  const rows: HotkeyRow[] = [];
+  try {
+    if (currentHotkeyTab === 0) {
       const accounts = await api.loadAccounts(basePath);
       const hotkeys = await api.getHotkeySettings();
       for (const acc of accounts) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${acc}</td><td class="hotkey-cell">${hotkeys[`account.${acc}`] || ""}</td>`;
-        tr.querySelector(".hotkey-cell")!.addEventListener("click", () => startRecording(0, accounts.indexOf(acc), tr));
-        tbody.appendChild(tr);
+        rows.push({ name: acc, hotkey: (hotkeys[`hotkeys.${acc}`] as string) || "" });
       }
-    } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="2">Error: ${e}</td></tr>`;
-    }
-  } else if (currentHotkeyTab === 1) {
-    const formations = ["Inf Phal", "Range Phal", "Cav Phal", "Inf Wedge", "Range Wedge", "Cav Wedge"];
-    const hotkeys = await api.getHotkeySettings();
-    for (const f of formations) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${f}</td><td class="hotkey-cell">${hotkeys[`swap.${f}`] || ""}</td>`;
-      const idx = formations.indexOf(f);
-      tr.querySelector(".hotkey-cell")!.addEventListener("click", () => startRecording(1, idx, tr));
-      tbody.appendChild(tr);
-    }
-  } else if (currentHotkeyTab === 2) {
-    try {
+    } else if (currentHotkeyTab === 1) {
+      const formations = ["Inf Phal", "Range Phal", "Cav Phal", "Inf Wedge", "Range Wedge", "Cav Wedge"];
+      const hotkeys = await api.getHotkeySettings();
+      for (const f of formations) {
+        rows.push({ name: f, hotkey: (hotkeys[`swap_hotkeys.${f}`] as string) || "" });
+      }
+    } else {
       const macros = await api.loadMiscCfg();
       for (const m of macros) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${m.name}</td><td class="hotkey-cell">${m.hotkey || ""}</td>`;
-        const idx = macros.indexOf(m);
-        tr.querySelector(".hotkey-cell")!.addEventListener("click", () => startRecording(2, idx, tr));
-        tbody.appendChild(tr);
+        rows.push({ name: m.name, hotkey: m.hotkey || "" });
       }
-    } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="2">Error: ${e}</td></tr>`;
     }
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="2">Error: ${e}</td></tr>`;
   }
+
+  const renderRows = () => {
+    tbody.innerHTML = "";
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${row.name}</td><td class="hotkey-cell">${row.hotkey}</td>`;
+      const cell = tr.querySelector(".hotkey-cell") as HTMLElement;
+      cell.addEventListener("click", () => startRecording(row, cell));
+      tr.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        const items = [
+          { label: "Reset Hotkey", action: () => resetHotkey(row) },
+        ];
+        if (currentHotkeyTab === 2) {
+          items.push({ label: "Delete Macro", action: () => deleteMacro(row) });
+        }
+        showContextMenu(e.clientX, e.clientY, items);
+      });
+      tbody.appendChild(tr);
+    });
+    if (currentHotkeyTab === 2) {
+      const addTr = document.createElement("tr");
+      addTr.innerHTML = `<td colspan="2" style="text-align:center; cursor:pointer; color:#0078d7;">+ Add Macro</td>`;
+      addTr.addEventListener("click", () => addMacro());
+      tbody.appendChild(addTr);
+    }
+  };
+  renderRows();
+
+  const resetHotkey = async (row: HotkeyRow) => {
+    try {
+      if (currentHotkeyTab === 0) {
+        await api.removeHotkey("hotkeys", row.name);
+      } else if (currentHotkeyTab === 1) {
+        await api.removeHotkey("swap_hotkeys", row.name);
+      } else {
+        row.hotkey = "";
+        const macros = await api.loadMiscCfg();
+        const updated = macros.map((m) => (m.name === row.name ? { ...m, hotkey: "" } : m));
+        await api.saveMiscCfg(updated);
+      }
+      row.hotkey = "";
+      renderRows();
+    } catch (e) {
+      alert(`Failed to reset hotkey: ${e}`);
+    }
+  };
+
+  const addMacro = async () => {
+    const name = prompt("Enter macro name:");
+    if (!name || !name.trim()) return;
+    try {
+      const macros = await api.loadMiscCfg();
+      if (macros.some((m) => m.name === name.trim())) {
+        alert("A macro with this name already exists.");
+        return;
+      }
+      macros.push({ name: name.trim(), hotkey: "", points: [] });
+      await api.saveMiscCfg(macros);
+      rows.push({ name: name.trim(), hotkey: "" });
+      renderRows();
+    } catch (e) {
+      alert(`Failed to add macro: ${e}`);
+    }
+  };
+
+  const deleteMacro = async (row: HotkeyRow) => {
+    try {
+      const macros = await api.loadMiscCfg();
+      await api.saveMiscCfg(macros.filter((m) => m.name !== row.name));
+      const idx = rows.indexOf(row);
+      if (idx !== -1) rows.splice(idx, 1);
+      renderRows();
+    } catch (e) {
+      alert(`Failed to delete macro: ${e}`);
+    }
+  };
+
+  const startRecording = (row: HotkeyRow, cell: HTMLElement) => {
+    cell.classList.add("recording");
+    cell.textContent = "Press key...";
+
+    const handler = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const keyName = e.key;
+      if (keyName === "Control" || keyName === "Alt" || keyName === "Shift" || keyName === "Meta") {
+        return;
+      }
+      document.removeEventListener("keydown", handler, true);
+      if (keyName === "Escape") {
+        cell.classList.remove("recording");
+        cell.textContent = row.hotkey;
+        return;
+      }
+      if (keyName === " " || keyName === "Enter" || keyName === "Backspace") {
+        alert("Space, Enter, and Backspace cannot be used as hotkeys.");
+        cell.classList.remove("recording");
+        cell.textContent = row.hotkey;
+        return;
+      }
+      const parts: string[] = [];
+      if (e.ctrlKey) parts.push("Ctrl");
+      if (e.altKey) parts.push("Alt");
+      if (e.shiftKey) parts.push("Shift");
+      if (e.metaKey) parts.push("Win");
+      parts.push(keyName.length === 1 ? keyName.toUpperCase() : keyName);
+      const hotkey = parts.join("+");
+
+      const taken = rows.some((r) => r !== row && r.hotkey === hotkey);
+      if (taken) {
+        alert("This hotkey is already assigned.");
+        cell.classList.remove("recording");
+        cell.textContent = row.hotkey;
+        return;
+      }
+
+      row.hotkey = hotkey;
+      cell.classList.remove("recording");
+      cell.textContent = hotkey;
+
+      (async () => {
+        try {
+          if (currentHotkeyTab === 0) {
+            await api.setHotkey("hotkeys", row.name, hotkey);
+          } else if (currentHotkeyTab === 1) {
+            await api.setHotkey("swap_hotkeys", row.name, hotkey);
+          } else {
+            const macros = await api.loadMiscCfg();
+            const updated = macros.map((m) =>
+              m.name === row.name ? { ...m, hotkey } : m,
+            );
+            await api.saveMiscCfg(updated);
+          }
+        } catch (err) {
+          alert(`Failed to save hotkey: ${err}`);
+        }
+      })();
+    };
+    document.addEventListener("keydown", handler, true);
+  };
 
   const btnBar = document.createElement("div");
   btnBar.className = "modal-buttons";
   const closeBtn = document.createElement("button");
   closeBtn.textContent = "Close";
-  closeBtn.addEventListener("click", () => closeModal(overlay));
+  closeBtn.addEventListener("click", () => {
+    hotkeyDialogOverlay?.remove();
+    hotkeyDialogOverlay = null;
+  });
   btnBar.appendChild(closeBtn);
   content.appendChild(btnBar);
 
-  const overlay = showModal("Hotkey Assignments", content, "420px");
-}
-
-function startRecording(table: number, row: number, tr: HTMLElement) {
-  recordingRow = row;
-  recordingTable = table;
-  const cells = tr.querySelectorAll("td");
-  cells.forEach((c) => c.classList.remove("recording"));
-  cells[1].classList.add("recording");
-  cells[1].textContent = "Press key...";
-
-  const handler = (e: KeyboardEvent) => {
-    e.preventDefault();
-    const parts: string[] = [];
-    if (e.ctrlKey) parts.push("Ctrl");
-    if (e.altKey) parts.push("Alt");
-    if (e.shiftKey) parts.push("Shift");
-    if (e.metaKey) parts.push("Win");
-
-    let keyName = e.key;
-    if (keyName === "Control" || keyName === "Alt" || keyName === "Shift" || keyName === "Meta") {
-      return;
-    }
-    if (keyName === " ") {
-      alert("Space cannot be used as a hotkey.");
-      return;
-    }
-    if (keyName.length === 1) {
-      keyName = keyName.toUpperCase();
-    }
-    parts.push(keyName);
-
-    const hotkey = parts.join("+");
-    cells[1].textContent = hotkey;
-    cells[1].classList.remove("recording");
-    recordingRow = -1;
-    document.removeEventListener("keydown", handler);
-  };
-  document.addEventListener("keydown", handler);
+  hotkeyDialogOverlay = showModal("Hotkey Assignments", content, "420px");
 }
 
 // --- Settings dialog ---

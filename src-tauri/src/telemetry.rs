@@ -2,41 +2,20 @@ use std::process::Command;
 use std::time::SystemTime;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
-use sha2::Digest;
+use std::fs;
 
 static LAST_SENT_TIME: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(0));
-static UPTIME_START: Lazy<Mutex<u64>> = Lazy::new(|| {
-    Mutex::new(
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-    )
-});
 
 fn get_os_version() -> String {
-    let output = Command::new("cmd")
-        .args(["/c", "ver"])
-        .output()
-        .ok();
+    let output = Command::new("cmd").args(["/c", "ver"]).output().ok();
     output
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "windows".to_string())
+        .unwrap_or_else(|| "linux".to_string())
 }
 
-fn run_powershell(command: &str) -> Option<String> {
-    let output = Command::new("powershell")
-        .args(["-Command", command])
-        .output()
-        .ok()?;
-    let s = String::from_utf8(output.stdout).ok()?;
-    let trimmed = s.trim().to_string();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
+fn run_powershell(_command: &str) -> Option<String> {
+    None
 }
 
 fn get_cpu_model() -> String {
@@ -45,22 +24,23 @@ fn get_cpu_model() -> String {
 }
 
 fn get_ram_mb() -> i64 {
-    run_powershell("Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty TotalVisibleMemorySize")
-        .and_then(|s| s.parse::<i64>().ok())
-        .map(|kb| kb / 1024)
-        .unwrap_or(-1)
+    run_powershell(
+        "Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty TotalVisibleMemorySize",
+    )
+    .and_then(|s| s.parse::<i64>().ok())
+    .map(|kb| kb / 1024)
+    .unwrap_or(-1)
 }
 
 fn get_gpu_model() -> String {
-    run_powershell("Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name")
-        .unwrap_or_else(|| "unknown".to_string())
+    run_powershell(
+        "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+    )
+    .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn get_timezone() -> String {
-    let output = Command::new("cmd")
-        .args(["/c", "tzutil", "/g"])
-        .output()
-        .ok();
+    let output = Command::new("cmd").args(["/c", "tzutil", "/g"]).output().ok();
     output
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
@@ -77,22 +57,22 @@ fn anonymize_path(path: &str) -> String {
     if !home.is_empty() {
         result = result.replace(&home, "[home]");
     }
-    result = result.replace("C:\\", "[drive]\\").replace("c:\\", "[drive]\\");
+    result = result
+        .replace("C:\\", "[drive]\\")
+        .replace("c:\\", "[drive]\\");
     result
 }
 
 fn get_license_key_last10(fingerprint: &str) -> String {
-    use std::fs;
-    use std::path::PathBuf;
     let exe = std::env::current_exe().unwrap_or_default();
     let dir = exe.parent().unwrap_or(std::path::Path::new("."));
-    let path: PathBuf = dir.join("config.cfg");
+    let path = dir.join("config.cfg");
     let content = fs::read_to_string(&path).unwrap_or_default();
     let mut ek = String::new();
     for line in content.lines() {
         let t = line.trim();
-        if t.starts_with("ek=") {
-            ek = t[3..].trim().to_string();
+        if let Some(stripped) = t.strip_prefix("ek=") {
+            ek = stripped.trim().to_string();
             break;
         }
     }
@@ -139,19 +119,35 @@ pub async fn collect_and_send_telemetry(
 
     let accounts_dir = std::path::PathBuf::from(&base_path).join("Accounts");
     let total_accounts = if accounts_dir.exists() {
-        std::fs::read_dir(&accounts_dir)
-            .map(|entries| entries.filter(|e| e.as_ref().map(|x| x.file_type().map(|t| t.is_dir()).unwrap_or(false)).unwrap_or(false)).count())
-            .unwrap_or(0u64)
+        fs::read_dir(&accounts_dir)
+            .map(|entries| {
+                entries
+                    .filter(|e| {
+                        e.as_ref()
+                            .map(|x| x.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                            .unwrap_or(false)
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
     } else {
-        0u64
+        0
     };
 
-    let country = reqwest::get("http://ip-api.com/json")
-        .await
-        .ok()
-        .and_then(|r| r.json::<serde_json::Value>().ok())
-        .and_then(|v| v.get("countryCode").and_then(|c| c.as_str()).map(|s| s.to_string()))
-        .unwrap_or_else(|| "unknown".to_string());
+    let country = match reqwest::get("http://ip-api.com/json").await {
+        Ok(resp) => match resp.bytes().await {
+            Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .and_then(|v| {
+                    v.get("countryCode")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| "unknown".to_string()),
+            Err(_) => "unknown".to_string(),
+        },
+        Err(_) => "unknown".to_string(),
+    };
 
     let json = serde_json::json!({
         "launch_count": launch_count,
@@ -175,10 +171,8 @@ pub async fn collect_and_send_telemetry(
     });
 
     let json_str = serde_json::to_string(&json).unwrap_or_default();
-    let url = format!(
-        "http://lmp.nobullypls.site/clt?data={}",
-        urlencoding::encode(&json_str)
-    );
+    let encoded = urlencode(&json_str);
+    let url = format!("http://lmp.nobullypls.site/clt?data={}", encoded);
 
     let _ = reqwest::get(&url).await;
     Ok(())
@@ -187,4 +181,19 @@ pub async fn collect_and_send_telemetry(
 #[tauri::command]
 pub fn increment_hide_to_tray() -> Result<i64, String> {
     Ok(0)
+}
+
+fn urlencode(s: &str) -> String {
+    let mut result = String::new();
+    for byte in s.as_bytes() {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(*byte as char);
+            }
+            _ => {
+                result.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    result
 }

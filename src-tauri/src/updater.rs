@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -121,8 +120,7 @@ pub async fn perform_update(zip_url: String) -> Result<(), String> {
     }
 
     let ps_path = dir.join("update.ps1");
-    let ps_script = format!(
-        r#"$ErrorActionPreference = 'Stop'
+    let ps_script = r#"$ErrorActionPreference = 'Stop'
 $folder = Split-Path -Parent $MyInvocation.MyCommand.Path
 $tmp = Join-Path $folder "tmp"
 $zip = Join-Path $tmp "LMPlus_latest.zip"
@@ -164,8 +162,7 @@ try {{
   exit 1
 }}
 Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
-"#
-    );
+"#.to_string();
 
     fs::write(&ps_path, ps_script)
         .map_err(|e| format!("Failed to write PowerShell script: {}", e))?;
@@ -198,21 +195,4 @@ fn compare_versions(latest: &str, current: &str) -> bool {
         }
     }
     false
-}
-
-mod urlencoding {
-    pub fn encode(s: &str) -> String {
-        let mut result = String::new();
-        for byte in s.as_bytes() {
-            match *byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    result.push(*byte as char);
-                }
-                _ => {
-                    result.push_str(&format!("%{:02X}", byte));
-                }
-            }
-        }
-        result
-    }
 }
