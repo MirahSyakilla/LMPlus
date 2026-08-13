@@ -1,4 +1,5 @@
 import * as api from "./api";
+import { listen } from "@tauri-apps/api/event";
 
 const app = document.getElementById("app")!;
 app.innerHTML = `
@@ -97,6 +98,7 @@ let processName = "";
 let accountsPath = "";
 let fingerprint = "";
 let startupTime = Date.now();
+let hotkeyEventsReady = false;
 
 // --- Context menu ---
 let contextMenu: HTMLElement | null = null;
@@ -191,6 +193,54 @@ async function refreshAccounts() {
   }
 }
 
+async function setupHotkeyEvents() {
+  if (hotkeyEventsReady) return;
+  hotkeyEventsReady = true;
+  await listen<string>("lmplus-hotkey", async (event) => {
+    const action = event.payload;
+    if (action.startsWith("swap_")) {
+      await api.executeMacro(action.slice(5), exePath, processName);
+    } else if (action.startsWith("misc_")) {
+      await api.executeMacro(action.slice(5), exePath, processName);
+    } else {
+      await switchAccount(action);
+    }
+  });
+}
+
+async function buildHotkeyRegistrationJson() {
+  const flat = await api.getHotkeySettings();
+  const hotkeys: Record<string, string> = {};
+  const swapHotkeys: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(flat)) {
+    if (!value) continue;
+    if (key.startsWith("hotkeys.")) {
+      hotkeys[key.slice("hotkeys.".length)] = value;
+    } else if (key.startsWith("swap_hotkeys.")) {
+      swapHotkeys[key.slice("swap_hotkeys.".length)] = value;
+    }
+  }
+
+  const miscHotkeys = (await api.loadMiscCfg())
+    .filter((m) => !!m.hotkey)
+    .map((m) => ({ name: m.name, hotkey: m.hotkey }));
+
+  return JSON.stringify({
+    hotkeys,
+    swap_hotkeys: swapHotkeys,
+    misc_hotkeys: miscHotkeys,
+  });
+}
+
+async function reregisterHotkeys() {
+  try {
+    await api.registerHotkeys(accountsPath, await buildHotkeyRegistrationJson());
+  } catch (e) {
+    console.warn("Hotkey registration failed:", e);
+  }
+}
+
 async function switchAccount(name: string) {
   try {
     await api.switchAccount(basePath, name);
@@ -206,6 +256,7 @@ async function renameAccount(oldName: string) {
     try {
       await api.renameAccount(basePath, oldName, newName.trim());
       await refreshAccounts();
+      await reregisterHotkeys();
     } catch (e) {
       alert(`Failed to rename: ${e}`);
     }
@@ -217,6 +268,7 @@ async function deleteAccount(name: string) {
     try {
       await api.deleteAccount(basePath, name);
       await refreshAccounts();
+      await reregisterHotkeys();
     } catch (e) {
       alert(`Failed to delete: ${e}`);
     }
@@ -247,6 +299,7 @@ function showAddAccountDialog() {
     try {
       await api.addAccount(basePath, name);
       await refreshAccounts();
+      await reregisterHotkeys();
     } catch (e) {
       alert(`Error: ${e}`);
     }
@@ -362,6 +415,7 @@ async function showHotkeyDialog() {
       }
       row.hotkey = "";
       renderRows();
+      await reregisterHotkeys();
     } catch (e) {
       alert(`Failed to reset hotkey: ${e}`);
     }
@@ -380,6 +434,7 @@ async function showHotkeyDialog() {
       await api.saveMiscCfg(macros);
       rows.push({ name: name.trim(), hotkey: "" });
       renderRows();
+      await reregisterHotkeys();
     } catch (e) {
       alert(`Failed to add macro: ${e}`);
     }
@@ -392,6 +447,7 @@ async function showHotkeyDialog() {
       const idx = rows.indexOf(row);
       if (idx !== -1) rows.splice(idx, 1);
       renderRows();
+      await reregisterHotkeys();
     } catch (e) {
       alert(`Failed to delete macro: ${e}`);
     }
@@ -453,6 +509,7 @@ async function showHotkeyDialog() {
             );
             await api.saveMiscCfg(updated);
           }
+          await reregisterHotkeys();
         } catch (err) {
           alert(`Failed to save hotkey: ${err}`);
         }
@@ -544,7 +601,7 @@ async function showSettingsDialog() {
   content.querySelector("#settings-update-lm")!.addEventListener("click", async () => {
     try {
       await api.restartGame(exePath, processName, false);
-      alert("Game stopped. Please run the updater manually.");
+      await api.launchLmUpdater();
     } catch (e) {
       alert(`Error: ${e}`);
     }
@@ -688,6 +745,8 @@ async function init() {
 
   // Refresh UI
   await refreshAccounts();
+  await setupHotkeyEvents();
+  await reregisterHotkeys();
   updateStatusBar();
 
   // Start telemetry timer

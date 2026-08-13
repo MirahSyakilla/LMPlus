@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::mem;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
@@ -13,7 +12,7 @@ use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use winapi::um::winuser::{
-    ClientToScreen, FindWindowExW, GetClientRect, GetCursorPos, GetForegroundWindow,
+    ClientToScreen, FindWindowExW, GetClientRect, GetCursorPos,
     GetSystemMetrics, GetWindowThreadProcessId, IsWindowVisible, SendInput, SetCursorPos,
     INPUT, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
     MOUSEEVENTF_MOVE, SM_CXSCREEN, SM_CYSCREEN,
@@ -79,38 +78,46 @@ fn send_click_at(x: i32, y: i32, is_speed: bool) {
     let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
     let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
 
-    let dx = (x as DWORD * 65535) / screen_w as DWORD;
-    let dy = (y as DWORD * 65535) / screen_h as DWORD;
+    let dx = ((x as i64 * 65535) / screen_w as i64) as i32;
+    let dy = ((y as i64 * 65535) / screen_h as i64) as i32;
 
     let offset = if is_speed { 5 } else { 2 };
-    let offset_dx = (((x + offset) as DWORD) * 65535) / screen_w as DWORD;
+    let offset_dx = (((x + offset) as i64 * 65535) / screen_w as i64) as i32;
 
     let mut inputs: [INPUT; 4] = unsafe { mem::zeroed() };
     inputs[0].type_ = INPUT_MOUSE;
-    inputs[0].u.mi_mut().dx = dx;
-    inputs[0].u.mi_mut().dy = dy;
-    inputs[0].u.mi_mut().dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+    unsafe {
+        inputs[0].u.mi_mut().dx = dx;
+        inputs[0].u.mi_mut().dy = dy;
+        inputs[0].u.mi_mut().dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+    }
 
     inputs[1].type_ = INPUT_MOUSE;
-    inputs[1].u.mi_mut().dx = offset_dx;
-    inputs[1].u.mi_mut().dy = dy;
-    inputs[1].u.mi_mut().dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+    unsafe {
+        inputs[1].u.mi_mut().dx = offset_dx;
+        inputs[1].u.mi_mut().dy = dy;
+        inputs[1].u.mi_mut().dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+    }
 
     inputs[2].type_ = INPUT_MOUSE;
-    inputs[2].u.mi_mut().dx = dx;
-    inputs[2].u.mi_mut().dy = dy;
-    inputs[2].u.mi_mut().dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTDOWN;
+    unsafe {
+        inputs[2].u.mi_mut().dx = dx;
+        inputs[2].u.mi_mut().dy = dy;
+        inputs[2].u.mi_mut().dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTDOWN;
+    }
 
     inputs[3].type_ = INPUT_MOUSE;
-    inputs[3].u.mi_mut().dx = dx;
-    inputs[3].u.mi_mut().dy = dy;
-    inputs[3].u.mi_mut().dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP;
+    unsafe {
+        inputs[3].u.mi_mut().dx = dx;
+        inputs[3].u.mi_mut().dy = dy;
+        inputs[3].u.mi_mut().dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP;
+    }
 
-    unsafe { SendInput(1, &inputs[0], mem::size_of::<INPUT>() as i32) };
-    unsafe { SendInput(1, &inputs[1], mem::size_of::<INPUT>() as i32) };
-    unsafe { SendInput(1, &inputs[2], mem::size_of::<INPUT>() as i32) };
-    unsafe { SendInput(1, &inputs[3], mem::size_of::<INPUT>() as i32) };
-    unsafe { SendInput(1, &inputs[3], mem::size_of::<INPUT>() as i32) };
+    unsafe { SendInput(1, &mut inputs[0], mem::size_of::<INPUT>() as i32) };
+    unsafe { SendInput(1, &mut inputs[1], mem::size_of::<INPUT>() as i32) };
+    unsafe { SendInput(1, &mut inputs[2], mem::size_of::<INPUT>() as i32) };
+    unsafe { SendInput(1, &mut inputs[3], mem::size_of::<INPUT>() as i32) };
+    unsafe { SendInput(1, &mut inputs[3], mem::size_of::<INPUT>() as i32) };
 }
 
 fn get_formation_coords(name: &str) -> Vec<(i32, i32)> {
@@ -165,14 +172,11 @@ pub fn execute_macro(macro_name: String, exe_path: String, process_name: String)
     *last = Instant::now();
     drop(last);
 
-    let points = if let Some(coords) = get_formation_coords(&macro_name) {
-        if coords.is_empty() {
-            load_misc_macros().get(&macro_name).cloned().unwrap_or_default()
-        } else {
-            coords
-        }
-    } else {
+    let coords = get_formation_coords(&macro_name);
+    let points = if coords.is_empty() {
         load_misc_macros().get(&macro_name).cloned().unwrap_or_default()
+    } else {
+        coords
     };
 
     if points.is_empty() {

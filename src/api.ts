@@ -166,6 +166,10 @@ export async function isAnotherInstanceRunning(): Promise<boolean> {
   return invoke("is_another_instance_running");
 }
 
+export async function launchLmUpdater(): Promise<void> {
+  return invoke("launch_lm_updater");
+}
+
 // --- Macros ---
 export async function executeMacro(macroName: string, exePath: string, processName: string): Promise<void> {
   return invoke("execute_macro", { macroName, exePath, processName });

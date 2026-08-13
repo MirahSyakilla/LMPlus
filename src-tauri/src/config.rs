@@ -296,6 +296,16 @@ pub fn rename_account(base_path: String, old_name: String, new_name: String) -> 
     }
     fs::rename(&src, &dst).map_err(|e| format!("Failed to rename account: {}", e))?;
 
+    let mut ini = read_ini()?;
+    let old_hotkey_key = format!("hotkeys.{}", old_name);
+    let new_hotkey_key = format!("hotkeys.{}", new_name);
+    if let Some(hotkeys) = ini.get_mut("Hotkeys") {
+        if let Some(value) = hotkeys.remove(&old_hotkey_key) {
+            hotkeys.insert(new_hotkey_key, value);
+        }
+    }
+    write_ini(&ini)?;
+
     let order = get_account_order_impl()?;
     let updated: Vec<String> = order
         .into_iter()
@@ -311,6 +321,12 @@ pub fn delete_account(base_path: String, name: String) -> Result<(), String> {
         return Err(format!("Account not found: {}", name));
     }
     fs::remove_dir_all(&folder).map_err(|e| format!("Failed to delete account: {}", e))?;
+
+    let mut ini = read_ini()?;
+    if let Some(hotkeys) = ini.get_mut("Hotkeys") {
+        hotkeys.remove(&format!("hotkeys.{}", name));
+    }
+    write_ini(&ini)?;
 
     let order: Vec<String> = get_account_order_impl()?
         .into_iter()

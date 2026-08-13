@@ -22,3 +22,8 @@ pub fn is_game_running(_exe_path: String, _process_name: String) -> Result<bool,
 pub fn is_another_instance_running() -> Result<bool, String> {
     Ok(false)
 }
+
+#[tauri::command]
+pub fn launch_lm_updater() -> Result<(), String> {
+    Err("Lords Mobile updater launch is only supported on Windows".to_string())
+}

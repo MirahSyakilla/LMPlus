@@ -2,6 +2,7 @@ use std::mem;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 use once_cell::sync::Lazy;
@@ -17,13 +18,12 @@ use winapi::um::tlhelp32::{
 use winapi::um::winnt::{
     MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
     PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
-    STILL_ACTIVE,
 };
 
 static PERSISTENT_ACTIVE: Lazy<Arc<AtomicBool>> = Lazy::new(|| Arc::new(AtomicBool::new(false)));
-static PERSISTENT_HANDLE: Lazy<Mutex<Option<winapi::shared::ntdef::HANDLE>>> = Lazy::new(|| Mutex::new(None));
 static PERSISTENT_PID: Lazy<Mutex<DWORD>> = Lazy::new(|| Mutex::new(0));
 static PERSISTENT_ADDR: Lazy<Mutex<usize>> = Lazy::new(|| Mutex::new(0));
+static PERSISTENT_THREAD: OnceLock<Mutex<Option<std::thread::JoinHandle<()>>>> = OnceLock::new();
 
 const TARGET_VALUE: DWORD = 1091052860;
 const ZOOM_VALUE: DWORD = 1099999999;
@@ -169,29 +169,20 @@ pub fn perform_map_zoom(exe_path: String, persistent: bool) -> Result<(), String
 
     if persistent {
         PERSISTENT_ACTIVE.store(true, Ordering::SeqCst);
-        *PERSISTENT_HANDLE.lock().unwrap() = Some(handle);
         *PERSISTENT_PID.lock().unwrap() = pid;
         *PERSISTENT_ADDR.lock().unwrap() = addr;
 
         let active = PERSISTENT_ACTIVE.clone();
-        let exe = exe_path;
-
-        thread::spawn(move || {
+        let process_addr = handle as usize;
+        let thread_handle = thread::spawn(move || {
+            let process = process_addr as winapi::shared::ntdef::HANDLE;
             while active.load(Ordering::SeqCst) {
                 thread::sleep(Duration::from_millis(100));
 
-                let mut guard = PERSISTENT_HANDLE.lock().unwrap();
-                let h = match *guard {
-                    Some(h) => h,
-                    None => break,
-                };
-
                 let mut exit_code: DWORD = 0;
-                if unsafe { GetExitCodeProcess(h, &mut exit_code) } == 0
-                    || exit_code != STILL_ACTIVE
+                if unsafe { GetExitCodeProcess(process, &mut exit_code) } == 0
+                    || exit_code != 259
                 {
-                    *guard = None;
-                    drop(guard);
                     *PERSISTENT_PID.lock().unwrap() = 0;
                     *PERSISTENT_ADDR.lock().unwrap() = 0;
                     break;
@@ -201,7 +192,7 @@ pub fn perform_map_zoom(exe_path: String, persistent: bool) -> Result<(), String
                 let mut bytes_written: usize = 0;
                 unsafe {
                     WriteProcessMemory(
-                        h,
+                        process,
                         addr as *mut _,
                         &ZOOM_VALUE as *const _ as *const _,
                         mem::size_of::<DWORD>(),
@@ -209,7 +200,13 @@ pub fn perform_map_zoom(exe_path: String, persistent: bool) -> Result<(), String
                     );
                 }
             }
+            unsafe { CloseHandle(process) };
         });
+        PERSISTENT_THREAD
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap()
+            .replace(thread_handle);
     } else {
         unsafe { CloseHandle(handle) };
     }
@@ -220,10 +217,10 @@ pub fn perform_map_zoom(exe_path: String, persistent: bool) -> Result<(), String
 #[tauri::command]
 pub fn stop_persistent_zoom() -> Result<(), String> {
     PERSISTENT_ACTIVE.store(false, Ordering::SeqCst);
-    let mut guard = PERSISTENT_HANDLE.lock().unwrap();
-    if let Some(h) = *guard {
-        unsafe { CloseHandle(h) };
-        *guard = None;
+    if let Some(lock) = PERSISTENT_THREAD.get() {
+        if let Some(handle) = lock.lock().unwrap().take() {
+            let _ = handle.join();
+        }
     }
     *PERSISTENT_PID.lock().unwrap() = 0;
     *PERSISTENT_ADDR.lock().unwrap() = 0;

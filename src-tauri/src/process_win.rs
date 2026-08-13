@@ -5,9 +5,8 @@ use std::ptr;
 use winapi::shared::minwindef::{DWORD, FALSE, HMODULE, MAX_PATH};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::handleapi::CloseHandle;
-use winapi::um::libloaderapi::GetModuleFileNameExW;
 use winapi::um::processthreadsapi::{CreateProcessW, OpenProcess, TerminateProcess, PROCESS_INFORMATION, STARTUPINFOW};
-use winapi::um::psapi::EnumProcessModules;
+use winapi::um::psapi::{EnumProcessModules, GetModuleFileNameExW};
 use winapi::um::winbase::CREATE_NO_WINDOW;
 use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -122,7 +121,7 @@ pub fn launch_game(exe_path: String, process_name: String) -> Result<(), String>
 
     let args = format!("-AD=0-0 -PATH=\"{}\"", exe_path);
     let app_wide = to_wide(&exe_path);
-    let cmd_wide = to_wide(&args);
+    let mut cmd_wide = to_wide(&args);
 
     let mut si: STARTUPINFOW = unsafe { mem::zeroed() };
     si.cb = mem::size_of::<STARTUPINFOW>() as DWORD;
@@ -199,4 +198,20 @@ pub fn is_game_running(exe_path: String, process_name: String) -> Result<bool, S
 pub fn is_another_instance_running() -> Result<bool, String> {
     let count = count_instances("LMPlus.exe")?;
     Ok(count > 1)
+}
+
+#[tauri::command]
+pub fn launch_lm_updater() -> Result<(), String> {
+    let appdata = std::env::var("APPDATA").map_err(|_| "APPDATA is not set".to_string())?;
+    let updater = std::path::PathBuf::from(appdata)
+        .join("IGG")
+        .join("Lords Mobile PC")
+        .join("Lords Mobile Updater.exe");
+    if !updater.exists() {
+        return Err(format!("Updater not found: {}", updater.display()));
+    }
+    std::process::Command::new(updater)
+        .spawn()
+        .map_err(|e| format!("Failed to launch updater: {}", e))?;
+    Ok(())
 }
