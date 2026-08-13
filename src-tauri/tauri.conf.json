@@ -1,0 +1,64 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicepkg/vscode-tauri/main/schemas/tauri.conf.json",
+  "productName": "LMPlus",
+  "version": "2.5.0",
+  "identifier": "com.meow.lmplus",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "LMPlus",
+        "width": 450,
+        "height": 440,
+        "resizable": false,
+        "maximizable": false,
+        "visible": false,
+        "center": true,
+        "decorations": true
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/meow.ico",
+      "iconAsTemplate": true,
+      "tooltip": "LMPlus"
+    },
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [],
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://api.github.com/repos/MirahSyakilla/LMPlus/releases/latest"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZFMzgzNkE4MEU4QjRCNkMKUldRUlBZSG9hRU1hM2VhZk5rVXJybGx4U2k4azhHdUlhS2dsaHh3aVBRaVBNb2VhT0tTa3l4TUUK"
+    },
+    "shell": {
+      "open": true
+    }
+  }
+}
