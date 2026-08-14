@@ -1,6 +1,7 @@
 use std::ffi::OsStr;
 use std::mem;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::CommandExt;
 use std::ptr;
 use winapi::shared::minwindef::{DWORD, FALSE, HMODULE, MAX_PATH};
 use winapi::um::errhandlingapi::GetLastError;
@@ -211,6 +212,7 @@ pub fn launch_lm_updater() -> Result<(), String> {
         return Err(format!("Updater not found: {}", updater.display()));
     }
     std::process::Command::new(updater)
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| format!("Failed to launch updater: {}", e))?;
     Ok(())

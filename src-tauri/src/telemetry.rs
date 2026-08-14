@@ -6,8 +6,19 @@ use std::fs;
 
 static LAST_SENT_TIME: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(0));
 
+fn hidden_command(program: &str) -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    command
+}
+
 fn get_os_version() -> String {
-    let output = Command::new("cmd").args(["/c", "ver"]).output().ok();
+    let output = hidden_command("cmd").args(["/c", "ver"]).output().ok();
     output
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
@@ -40,7 +51,7 @@ fn get_gpu_model() -> String {
 }
 
 fn get_timezone() -> String {
-    let output = Command::new("cmd").args(["/c", "tzutil", "/g"]).output().ok();
+    let output = hidden_command("cmd").args(["/c", "tzutil", "/g"]).output().ok();
     output
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())

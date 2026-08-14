@@ -52,7 +52,9 @@ style.textContent = `
     box-shadow: 0 4px 16px rgba(0,0,0,0.2);
   }
   .modal h3 { margin-bottom: 12px; font-size: 14px; }
+  .modal label { display: block; margin-bottom: 5px; }
   .modal input { width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; margin-bottom: 8px; }
+  .dialog-message { white-space: pre-wrap; line-height: 1.45; margin-bottom: 12px; color: #222; }
   .modal-buttons { display: flex; gap: 6px; justify-content: flex-end; }
   .modal-buttons button { padding: 4px 12px; border: 1px solid #999; border-radius: 3px; cursor: pointer; }
   .modal-buttons button.primary { background: #0078d7; color: #fff; border-color: #0078d7; }
@@ -133,7 +135,12 @@ function hideContextMenu() {
 }
 
 // --- Modal helper ---
-function showModal(title: string, content: HTMLElement, width?: string): HTMLElement {
+function showModal(
+  title: string,
+  content: HTMLElement,
+  width?: string,
+  onDismiss?: () => void,
+): HTMLElement {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   const modal = document.createElement("div");
@@ -145,7 +152,10 @@ function showModal(title: string, content: HTMLElement, width?: string): HTMLEle
   modal.appendChild(content);
   overlay.appendChild(modal);
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) overlay.remove();
+    if (e.target === overlay) {
+      overlay.remove();
+      onDismiss?.();
+    }
   });
   document.body.appendChild(overlay);
   return overlay;
@@ -153,6 +163,122 @@ function showModal(title: string, content: HTMLElement, width?: string): HTMLEle
 
 function closeModal(overlay: HTMLElement) {
   overlay.remove();
+}
+
+function showMessageDialog(title: string, message: string): Promise<void> {
+  return new Promise((resolve) => {
+    const content = document.createElement("div");
+    const text = document.createElement("div");
+    text.className = "dialog-message";
+    text.textContent = message;
+    content.appendChild(text);
+
+    const btnBar = document.createElement("div");
+    btnBar.className = "modal-buttons";
+    const ok = document.createElement("button");
+    ok.className = "primary";
+    ok.textContent = "OK";
+    btnBar.appendChild(ok);
+    content.appendChild(btnBar);
+
+    let overlay: HTMLElement;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      closeModal(overlay);
+      resolve();
+    };
+
+    overlay = showModal(title, content, undefined, settle);
+    ok.addEventListener("click", settle);
+    ok.focus();
+  });
+}
+
+function showConfirmDialog(
+  title: string,
+  message: string,
+  okLabel = "OK",
+  cancelLabel = "Cancel",
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const content = document.createElement("div");
+    const text = document.createElement("div");
+    text.className = "dialog-message";
+    text.textContent = message;
+    content.appendChild(text);
+
+    const btnBar = document.createElement("div");
+    btnBar.className = "modal-buttons";
+    const cancel = document.createElement("button");
+    cancel.textContent = cancelLabel;
+    const ok = document.createElement("button");
+    ok.className = "primary";
+    ok.textContent = okLabel;
+    btnBar.append(cancel, ok);
+    content.appendChild(btnBar);
+
+    let overlay: HTMLElement;
+    let settled = false;
+    const settle = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      closeModal(overlay);
+      resolve(value);
+    };
+
+    overlay = showModal(title, content, undefined, () => settle(false));
+    cancel.addEventListener("click", () => settle(false));
+    ok.addEventListener("click", () => settle(true));
+    ok.focus();
+  });
+}
+
+function showInputDialog(
+  title: string,
+  label: string,
+  initialValue = "",
+  okLabel = "OK",
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const content = document.createElement("div");
+    const inputLabel = document.createElement("label");
+    inputLabel.textContent = label;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = initialValue;
+    content.append(inputLabel, input);
+
+    const btnBar = document.createElement("div");
+    btnBar.className = "modal-buttons";
+    const cancel = document.createElement("button");
+    cancel.textContent = "Cancel";
+    const ok = document.createElement("button");
+    ok.className = "primary";
+    ok.textContent = okLabel;
+    btnBar.append(cancel, ok);
+    content.appendChild(btnBar);
+
+    let overlay: HTMLElement;
+    let settled = false;
+    const settle = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      closeModal(overlay);
+      resolve(value);
+    };
+
+    overlay = showModal(title, content, undefined, () => settle(null));
+    cancel.addEventListener("click", () => settle(null));
+    ok.addEventListener("click", () => settle(input.value));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") settle(input.value);
+      if (e.key === "Escape") settle(null);
+    });
+    input.focus();
+    input.select();
+  });
 }
 
 // --- Account list ---
@@ -246,31 +372,31 @@ async function switchAccount(name: string) {
     await api.switchAccount(basePath, name);
     await api.restartGame(exePath, processName, true);
   } catch (e) {
-    alert(`Failed to switch account: ${e}`);
+    await showMessageDialog("Switch Account", `Failed to switch account:\n${e}`);
   }
 }
 
 async function renameAccount(oldName: string) {
-  const newName = prompt("Enter new account name:", oldName);
+  const newName = await showInputDialog("Rename Account", "Enter new account name:", oldName);
   if (newName && newName.trim() && newName !== oldName) {
     try {
       await api.renameAccount(basePath, oldName, newName.trim());
       await refreshAccounts();
       await reregisterHotkeys();
     } catch (e) {
-      alert(`Failed to rename: ${e}`);
+      await showMessageDialog("Rename Account", `Failed to rename:\n${e}`);
     }
   }
 }
 
 async function deleteAccount(name: string) {
-  if (confirm(`Confirm delete '${name}'?`)) {
+  if (await showConfirmDialog("Delete Account", `Confirm delete '${name}'?`, "Delete")) {
     try {
       await api.deleteAccount(basePath, name);
       await refreshAccounts();
       await reregisterHotkeys();
     } catch (e) {
-      alert(`Failed to delete: ${e}`);
+      await showMessageDialog("Delete Account", `Failed to delete:\n${e}`);
     }
   }
 }
@@ -292,7 +418,7 @@ function showAddAccountDialog() {
   content.querySelector("#btn-ok")!.addEventListener("click", async () => {
     const name = (content.querySelector("#account-name-input") as HTMLInputElement).value.trim();
     if (!name) {
-      alert("Account name cannot be empty.");
+      await showMessageDialog("Add Account", "Account name cannot be empty.");
       return;
     }
     closeModal(overlay);
@@ -301,7 +427,7 @@ function showAddAccountDialog() {
       await refreshAccounts();
       await reregisterHotkeys();
     } catch (e) {
-      alert(`Error: ${e}`);
+      await showMessageDialog("Add Account", `Error:\n${e}`);
     }
   });
 }
@@ -417,17 +543,17 @@ async function showHotkeyDialog() {
       renderRows();
       await reregisterHotkeys();
     } catch (e) {
-      alert(`Failed to reset hotkey: ${e}`);
+      await showMessageDialog("Hotkeys", `Failed to reset hotkey:\n${e}`);
     }
   };
 
   const addMacro = async () => {
-    const name = prompt("Enter macro name:");
+    const name = await showInputDialog("Add Macro", "Enter macro name:");
     if (!name || !name.trim()) return;
     try {
       const macros = await api.loadMiscCfg();
       if (macros.some((m) => m.name === name.trim())) {
-        alert("A macro with this name already exists.");
+        await showMessageDialog("Add Macro", "A macro with this name already exists.");
         return;
       }
       macros.push({ name: name.trim(), hotkey: "", points: [] });
@@ -436,7 +562,7 @@ async function showHotkeyDialog() {
       renderRows();
       await reregisterHotkeys();
     } catch (e) {
-      alert(`Failed to add macro: ${e}`);
+      await showMessageDialog("Add Macro", `Failed to add macro:\n${e}`);
     }
   };
 
@@ -449,7 +575,7 @@ async function showHotkeyDialog() {
       renderRows();
       await reregisterHotkeys();
     } catch (e) {
-      alert(`Failed to delete macro: ${e}`);
+      await showMessageDialog("Delete Macro", `Failed to delete macro:\n${e}`);
     }
   };
 
@@ -471,7 +597,7 @@ async function showHotkeyDialog() {
         return;
       }
       if (keyName === " " || keyName === "Enter" || keyName === "Backspace") {
-        alert("Space, Enter, and Backspace cannot be used as hotkeys.");
+        void showMessageDialog("Hotkeys", "Space, Enter, and Backspace cannot be used as hotkeys.");
         cell.classList.remove("recording");
         cell.textContent = row.hotkey;
         return;
@@ -486,7 +612,7 @@ async function showHotkeyDialog() {
 
       const taken = rows.some((r) => r !== row && r.hotkey === hotkey);
       if (taken) {
-        alert("This hotkey is already assigned.");
+        void showMessageDialog("Hotkeys", "This hotkey is already assigned.");
         cell.classList.remove("recording");
         cell.textContent = row.hotkey;
         return;
@@ -511,7 +637,7 @@ async function showHotkeyDialog() {
           }
           await reregisterHotkeys();
         } catch (err) {
-          alert(`Failed to save hotkey: ${err}`);
+          await showMessageDialog("Hotkeys", `Failed to save hotkey:\n${err}`);
         }
       })();
     };
@@ -571,7 +697,7 @@ async function showSettingsDialog() {
     const order = Array.from(items).map((el) => el.textContent!);
     await api.setAccountOrder(order);
     await refreshAccounts();
-    alert("Order saved!");
+    await showMessageDialog("Settings", "Order saved.");
   });
 
   content.querySelector("#settings-reset")!.addEventListener("click", async () => {
@@ -583,17 +709,24 @@ async function showSettingsDialog() {
 
   content.querySelector("#settings-refresh")!.addEventListener("click", async () => {
     await refreshAccounts();
-    alert("Account list refreshed.");
+    await showMessageDialog("Settings", "Account list refreshed.");
   });
 
   content.querySelector("#settings-map-zoom")!.addEventListener("click", async () => {
-    if (confirm("Ensure 'Kingdom 3D Map' is set to Balanced before pressing Ok!\n\nMake sure to be in map before pressing Ok!")) {
-      const persistent = confirm("Enable Persistent Map Zoom?");
+    if (await showConfirmDialog(
+      "Map Zoom",
+      "Ensure 'Kingdom 3D Map' is set to Balanced before pressing OK.\n\nMake sure to be in map before pressing OK.",
+      "Continue",
+    )) {
+      const persistent = await showConfirmDialog("Map Zoom", "Enable Persistent Map Zoom?", "Enable", "Skip");
       try {
         await api.performMapZoom(exePath, persistent);
-        alert("Map zoom applied! This will reset if you change the 'Kingdom 3D Map' setting.");
+        await showMessageDialog(
+          "Map Zoom",
+          "Map zoom applied. This will reset if you change the 'Kingdom 3D Map' setting.",
+        );
       } catch (e) {
-        alert(`Error: ${e}`);
+        await showMessageDialog("Map Zoom", `Error:\n${e}`);
       }
     }
   });
@@ -603,13 +736,16 @@ async function showSettingsDialog() {
       await api.restartGame(exePath, processName, false);
       await api.launchLmUpdater();
     } catch (e) {
-      alert(`Error: ${e}`);
+      await showMessageDialog("Update LM", `Error:\n${e}`);
     }
   });
 
   content.querySelector("#settings-about")!.addEventListener("click", async () => {
     const ver = await api.getVersion();
-    alert(`LMPlus\nVersion: ${ver}\nDeveloper: Meow\nContact: @.meow._\n\nCopyrighted by NbP`);
+    await showMessageDialog(
+      "About LMPlus",
+      `LMPlus\nVersion: ${ver}\nDeveloper: Meow\nContact: @.meow._\n\nCopyrighted by NbP`,
+    );
   });
 }
 
@@ -660,7 +796,7 @@ async function verifyLicense() {
     }
 
     // Show license input
-    const key = prompt("Enter license key:");
+    const key = await showInputDialog("License Verification", "Enter license key:");
     if (!key) return false;
 
     const result = await api.verifyLicense(key, fingerprint);
@@ -669,11 +805,11 @@ async function verifyLicense() {
       updateLicenseLabel();
       return true;
     } else {
-      alert("License verification failed.");
+      await showMessageDialog("License Verification", "License verification failed.");
       return false;
     }
   } catch (e) {
-    alert(`License error: ${e}`);
+    await showMessageDialog("License Verification", `License error:\n${e}`);
     return false;
   }
 }
@@ -696,7 +832,7 @@ async function init() {
   // Check for another instance
   try {
     if (await api.isAnotherInstanceRunning()) {
-      alert("Another instance of LMPlus is already running!");
+      await showMessageDialog("LMPlus", "Another instance of LMPlus is already running.");
       return;
     }
   } catch (e) {
@@ -707,7 +843,13 @@ async function init() {
   try {
     const update = await api.checkForUpdate();
     if (update.update_available) {
-      if (confirm(`New version ${update.latest_version} available (current: ${update.current_version}). Update now?`)) {
+      if (
+        await showConfirmDialog(
+          "Update Available",
+          `New version ${update.latest_version} is available.\nCurrent version: ${update.current_version}\n\nUpdate now?`,
+          "Update",
+        )
+      ) {
         await api.performUpdate(update.zip_url);
         return;
       }

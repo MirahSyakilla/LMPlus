@@ -6,6 +6,18 @@ use std::process::Command;
 const GITHUB_API: &str = "https://api.github.com/repos/MirahSyakilla/LMPlus/releases/latest";
 const ZIP_PASSWORD: &str = "lmp25nbp";
 
+fn hidden_command(program: &str) -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use winapi::um::winbase::CREATE_NO_WINDOW;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 fn exe_dir() -> Result<PathBuf, String> {
     let exe = env::current_exe().map_err(|e| format!("Failed to get exe path: {}", e))?;
     exe.parent()
@@ -70,6 +82,10 @@ pub async fn check_for_update() -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub async fn perform_update(zip_url: String) -> Result<(), String> {
     let dir = exe_dir()?;
+    let exe_name = env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "lmplus.exe".to_string());
     let tmp_dir = dir.join("tmp");
 
     if tmp_dir.exists() {
@@ -156,18 +172,19 @@ Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $folder "*.zip") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $folder "Updater.exe") -Force -ErrorAction SilentlyContinue
 try {{
-  Start-Process -FilePath (Join-Path $folder "LMPlus.exe") -ErrorAction Stop
+  Start-Process -FilePath (Join-Path $folder "__EXE_NAME__") -ErrorAction Stop
 }} catch {{
-  Write-Error "Failed to start LMPlus.exe: $_"
+  Write-Error "Failed to start __EXE_NAME__: $_"
   exit 1
 }}
 Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
-"#.to_string();
+"#
+    .replace("__EXE_NAME__", &exe_name);
 
     fs::write(&ps_path, ps_script)
         .map_err(|e| format!("Failed to write PowerShell script: {}", e))?;
 
-    Command::new("powershell.exe")
+    hidden_command("powershell.exe")
         .args([
             "-ExecutionPolicy",
             "Bypass",

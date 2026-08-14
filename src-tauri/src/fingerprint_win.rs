@@ -1,9 +1,13 @@
 use sha2::{Digest, Sha256};
 use std::process::Command;
+use std::os::windows::process::CommandExt;
+use winapi::um::winbase::CREATE_NO_WINDOW;
 
 fn run_wmic_query(class: &str, property: &str) -> Result<String, String> {
-    let output = Command::new("wmic")
+    let mut command = Command::new("wmic");
+    let output = command
         .args([class, "get", property])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("Failed to run wmic: {}", e))?;
 
