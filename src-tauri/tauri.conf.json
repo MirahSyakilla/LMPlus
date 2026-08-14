@@ -18,7 +18,7 @@
         "height": 440,
         "resizable": false,
         "maximizable": false,
-        "visible": false,
+        "visible": true,
         "center": true,
         "decorations": true
       }
