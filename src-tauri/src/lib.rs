@@ -704,37 +704,6 @@ async fn cmd_perform_update(
     updater::perform_update(app, download_url).await
 }
 
-/// CLI self-test entry (see main.rs). dry=true validates prereqs only.
-pub fn selftest_entry(dry: bool) -> String {
-    let exe_path = default_game_exe_path();
-    let results = match lmagent::selftest::load_test_config(&exe_path) {
-        Ok(cfg) => {
-            if dry {
-                lmagent::selftest::dry_run(&cfg)
-            } else {
-                lmagent::selftest::run_selftest(&cfg)
-            }
-        }
-        Err(e) => vec![("config".to_string(), lmagent::selftest::TestVerdict::Fail(e))],
-    };
-    lmagent::selftest::format_results(&results)
-}
-
-fn default_game_exe_path() -> String {
-    // Convention: the game sits next to the base path configured in settings;
-    // fall back to the standard IGG install layout.
-    if let Ok(ini) = config::read_ini_pub() {
-        if let Some(base) = config::general_value_pub(&ini, "appPath") {
-            let p = std::path::PathBuf::from(&base).join("Lords Mobile.exe");
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-            return base;
-        }
-    }
-    String::new()
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

@@ -25,8 +25,14 @@ fn to_wide(s: &str) -> Vec<u16> {
     std::ffi::OsStr::new(s).encode_wide().chain(Some(0)).collect()
 }
 
-/// Find the game process by exe path; returns its PID.
+/// Find the game process by its FULL exe path (e.g.
+/// `D:\...\Game\Lords Mobile PC.exe`). Only a process whose on-disk image
+/// matches exactly (case-insensitive) counts — this prevents grabbing a game
+/// instance launched from a different install folder.
 pub fn find_game_pid(exe_path: &str) -> Option<DWORD> {
+    if exe_path.trim().is_empty() {
+        return None;
+    }
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
         return None;
@@ -37,6 +43,7 @@ pub fn find_game_pid(exe_path: &str) -> Option<DWORD> {
     unsafe {
         if Process32FirstW(snapshot, &mut pe) != 0 {
             loop {
+                // Cheap pre-filter on the process name before opening handles.
                 let name = String::from_utf16_lossy(
                     &pe.szExeFile[..pe
                         .szExeFile
@@ -44,11 +51,15 @@ pub fn find_game_pid(exe_path: &str) -> Option<DWORD> {
                         .position(|&c| c == 0)
                         .unwrap_or(pe.szExeFile.len())],
                 );
-                if name.eq_ignore_ascii_case("Lords Mobile.exe")
-                    || name.eq_ignore_ascii_case("lm.exe")
-                {
-                    result = Some(pe.th32ProcessID);
-                    break;
+                let expected_name = exe_path
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .unwrap_or("");
+                if !expected_name.is_empty() && name.eq_ignore_ascii_case(expected_name) {
+                    if process_image_path_matches(pe.th32ProcessID, exe_path) {
+                        result = Some(pe.th32ProcessID);
+                        break;
+                    }
                 }
                 if Process32NextW(snapshot, &mut pe) == 0 {
                     break;
@@ -57,8 +68,33 @@ pub fn find_game_pid(exe_path: &str) -> Option<DWORD> {
         }
         CloseHandle(snapshot);
     }
-    let _ = exe_path;
     result
+}
+
+/// Read the on-disk image path of a PID and compare (case-insensitive) with
+/// the expected exe path. Returns false on any query failure.
+fn process_image_path_matches(pid: DWORD, expected_path: &str) -> bool {
+    use winapi::um::psapi::GetModuleFileNameExW;
+    use winapi::um::processthreadsapi::OpenProcess as OpenProcessQuery;
+    use winapi::um::winnt::PROCESS_QUERY_INFORMATION;
+
+    let normalize = |s: &str| s.replace('/', "\\").to_ascii_lowercase();
+    let expected = normalize(expected_path);
+
+    unsafe {
+        let handle = OpenProcessQuery(PROCESS_QUERY_INFORMATION, FALSE, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut path: [u16; 1024] = [0; 1024];
+        let len = GetModuleFileNameExW(handle, std::ptr::null_mut(), path.as_mut_ptr(), 1024);
+        CloseHandle(handle);
+        if len == 0 {
+            return false;
+        }
+        let actual = String::from_utf16_lossy(&path[..len as usize]);
+        normalize(&actual) == expected
+    }
 }
 
 /// Inject the agent DLL into the target process via the classic
@@ -158,8 +194,12 @@ pub fn ensure_agent(exe_path: &str, dll_path: &str) -> Result<(), String> {
     if agent_alive() {
         return Ok(());
     }
-    let pid = find_game_pid(exe_path)
-        .ok_or_else(|| "game process not found (is Lords Mobile running?)".to_string())?;
+    let pid = find_game_pid(exe_path).ok_or_else(|| {
+        format!(
+            "game process not found for this app path (no running process with image {})",
+            exe_path
+        )
+    })?;
     inject(pid, dll_path)?;
     // Give the agent a moment to boot its pipe server.
     for _ in 0..40 {

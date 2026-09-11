@@ -4,7 +4,6 @@
 pub mod action;
 pub mod agent_client;
 pub mod inject;
-pub mod selftest;
 
 use action::LMPlusAction;
 use std::sync::Mutex;
