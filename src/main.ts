@@ -1547,22 +1547,7 @@ async function showSettingsDialog() {
   });
 
   content.querySelector("#settings-map-zoom")!.addEventListener("click", async () => {
-    if (await showConfirmDialog(
-      "Map Zoom",
-      "Ensure 'Kingdom 3D Map' is set to Balanced before pressing Continue.\n\nMake sure to be in map before pressing Continue.",
-      "Continue",
-    )) {
-      const persistent = await showConfirmDialog("Map Zoom", "Enable Persistent Map Zoom?", "Enable", "Skip");
-      try {
-        await api.performMapZoom(exePath, persistent);
-        await showMessageDialog(
-          "Map Zoom",
-          "Map zoom applied. This will reset if you change the 'Kingdom 3D Map' setting.",
-        );
-      } catch (e) {
-        await showMessageDialog("Map Zoom", `Error:\n${e}`);
-      }
-    }
+    showMapZoomSlider();
   });
 
   content.querySelector("#settings-update-lm")!.addEventListener("click", async () => {
@@ -1577,6 +1562,54 @@ async function showSettingsDialog() {
   content.querySelector("#settings-about")!.addEventListener("click", async () => {
     await showAboutDialog();
   });
+}
+
+function showMapZoomSlider() {
+  const content = document.createElement("div");
+  content.className = "input-dialog";
+  content.innerHTML = `
+    <label>Map Zoom <span id="zoom-level-label">—</span></label>
+    <input id="zoom-slider" type="range" min="0" max="100" step="1" value="50" style="width:100%" />
+    <div class="modal-buttons">
+      <button id="btn-zoom-out">−</button>
+      <button id="btn-zoom-in">+</button>
+      <button id="btn-close" class="primary">Close</button>
+    </div>
+  `;
+  const overlay = showModal("Map Zoom", content);
+  const slider = content.querySelector("#zoom-slider") as HTMLInputElement;
+  const label = content.querySelector("#zoom-level-label") as HTMLSpanElement;
+  let lastApplied = -1;
+
+  const apply = async () => {
+    const level = Number(slider.value) / 100;
+    if (level === lastApplied) return;
+    lastApplied = level;
+    label.textContent = `${slider.value}%`;
+    try {
+      await api.executeDirectAction(exePath, { action: "mapzoom", value: level });
+      addDebugLog("Map zoom", "info", `${slider.value}%`);
+    } catch (e) {
+      addDebugLog("Map zoom failed", "error", String(e));
+      label.textContent = "error";
+    }
+  };
+
+  let debounceTimer: number | undefined;
+  slider.addEventListener("input", () => {
+    label.textContent = `${slider.value}%`;
+    window.clearTimeout(debounceTimer);
+    debounceTimer = window.setTimeout(apply, 120);
+  });
+  content.querySelector("#btn-zoom-out")!.addEventListener("click", () => {
+    slider.value = String(Math.max(0, Number(slider.value) - 10));
+    void apply();
+  });
+  content.querySelector("#btn-zoom-in")!.addEventListener("click", () => {
+    slider.value = String(Math.min(100, Number(slider.value) + 10));
+    void apply();
+  });
+  content.querySelector("#btn-close")!.addEventListener("click", () => closeModal(overlay));
 }
 
 function getDragAfterElement(container: Element, y: number): Element | null {

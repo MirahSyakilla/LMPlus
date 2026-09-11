@@ -190,12 +190,18 @@ extern "C" {
     ) -> crate::il2cpp::ClassPtr;
 }
 
+/// Deliberate pre-switch latency (ms) — see switch_account_restart.
+const SWITCH_LATENCY_MS: u64 = 1500;
+
 /// Account switch: triggers the native UISwitchAccount path.
 /// RE reference: UISwitchAccount.OnButtonClick → AccountManager.SwitchAccountRestart
 /// → ContinuousConfirmation.SwitchAccountRestart → SteamIGGSDKPlugin.SDK_SwitchLogin.
 /// The game tears the network session down and re-runs the LoginPhase state
 /// machine in-process; the OS process does NOT restart.
 pub fn switch_account_restart() -> Result<(), String> {
+    // Human-like latency before the switch (server-side detection watches for
+    // machine-speed switching; a deliberate pause keeps us under that pattern).
+    std::thread::sleep(std::time::Duration::from_millis(SWITCH_LATENCY_MS));
     let (tx, rx) = std::sync::mpsc::channel();
     crate::unity_thread::enqueue(Box::new(move || {
         tx.send(do_switch_account()).ok();

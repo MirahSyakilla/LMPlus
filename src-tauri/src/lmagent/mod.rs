@@ -4,6 +4,7 @@
 pub mod action;
 pub mod agent_client;
 pub mod inject;
+pub mod selftest;
 
 use action::LMPlusAction;
 use std::sync::Mutex;
@@ -42,17 +43,26 @@ fn parse_response(response: &str) -> Result<String, String> {
     }
 }
 
-/// Locate lmp_agent.dll next to LMPlus.exe.
+/// Locate lmp_agent.dll. Bundled installers place it at
+/// <exe_dir>/resources/lmp_agent.dll (tauri resources); dev builds may have it
+/// beside the exe.
 fn agent_dll_path() -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {}", e))?;
-    let dir = exe
-        .parent()
-        .ok_or("failed to get exe directory")?;
-    let path = dir.join(inject::AGENT_DLL_NAME);
-    if !path.exists() {
-        return Err(format!("agent DLL missing: {}", path.display()));
+    let dir = exe.parent().ok_or("failed to get exe directory")?;
+    let candidates = [
+        dir.join("resources").join(inject::AGENT_DLL_NAME),
+        dir.join(inject::AGENT_DLL_NAME),
+    ];
+    for path in &candidates {
+        if path.exists() {
+            return Ok(path.to_string_lossy().to_string());
+        }
     }
-    Ok(path.to_string_lossy().to_string())
+    Err(format!(
+        "agent DLL missing: looked at {} and {}",
+        candidates[0].display(),
+        candidates[1].display()
+    ))
 }
 
 #[cfg(test)]

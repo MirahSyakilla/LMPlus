@@ -44,6 +44,10 @@ fn settings_path() -> Result<PathBuf, String> {
     Ok(dir.join("settings.ini"))
 }
 
+pub(crate) fn read_ini_pub() -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
+    read_ini()
+}
+
 fn read_ini() -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
     let path = settings_path()?;
     let content = fs::read_to_string(&path).unwrap_or_default();
@@ -88,6 +92,10 @@ fn exe_dir() -> Result<PathBuf, String> {
     exe.parent()
         .map(|p| p.to_path_buf())
         .ok_or("Failed to get exe directory".to_string())
+}
+
+pub(crate) fn general_value_pub(ini: &BTreeMap<String, BTreeMap<String, String>>, key: &str) -> Option<String> {
+    general_value(ini, key)
 }
 
 fn general_value(ini: &BTreeMap<String, BTreeMap<String, String>>, key: &str) -> Option<String> {

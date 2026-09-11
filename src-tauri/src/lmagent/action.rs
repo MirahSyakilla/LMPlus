@@ -39,7 +39,7 @@ impl LMPlusAction {
                 format!("{{\"action\":\"map3dview\",\"mode\":{}}}", mode)
             }
             LMPlusAction::MapZoom { value } => {
-                format!("{{\"action\":\"zoom\",\"value\":{}}}", value)
+                format!("{{\"action\":\"zoom\",\"level\":{}}}", value)
             }
             LMPlusAction::SwitchAccount => "{\"action\":\"switch_account\"}".to_string(),
         }
@@ -55,7 +55,7 @@ impl LMPlusAction {
                 .get(*mode as usize)
                 .map(|s| format!("Kingdom Map 3D View: {}", s))
                 .unwrap_or_else(|| format!("Map3DView {}", mode)),
-            LMPlusAction::MapZoom { value } => format!("Map Zoom {:.1}", value),
+            LMPlusAction::MapZoom { value } => format!("Map Zoom {:.0}%", value * 100.0),
             LMPlusAction::SwitchAccount => "Switch Account".to_string(),
         }
     }
@@ -81,7 +81,7 @@ pub fn resolve_hotkey_action(action: &str) -> Option<LMPlusAction> {
         }
         "mapzoom" => {
             let value = arg.parse::<f32>().ok()?;
-            if !value.is_finite() || !(0.1..=100.0).contains(&value) {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
                 return None;
             }
             Some(LMPlusAction::MapZoom { value })
@@ -125,8 +125,8 @@ mod tests {
             "{\"action\":\"map3dview\",\"mode\":2}"
         );
         assert_eq!(
-            LMPlusAction::MapZoom { value: 12.5 }.to_wire(),
-            "{\"action\":\"zoom\",\"value\":12.5}"
+            LMPlusAction::MapZoom { value: 0.5 }.to_wire(),
+            "{\"action\":\"zoom\",\"level\":0.5}"
         );
         assert_eq!(
             LMPlusAction::SwitchAccount.to_wire(),

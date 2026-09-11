@@ -72,8 +72,8 @@ fn handle_request(req: ActionRequest) -> ActionResponse {
             Ok(()) => ActionResponse::Ok(format!("map3dview {}", mode)),
             Err(e) => ActionResponse::Err(e),
         },
-        ActionRequest::MapZoom { value } => match mapview::set_camera_dist(value) {
-            Ok(()) => ActionResponse::Ok(format!("zoom {}", value)),
+        ActionRequest::MapZoom { value } => match mapview::set_camera_dist_level(value) {
+            Ok(()) => ActionResponse::Ok(format!("zoom level {}", value)),
             Err(e) => ActionResponse::Err(e),
         },
         ActionRequest::SwitchAccount => match formation::switch_account_restart() {

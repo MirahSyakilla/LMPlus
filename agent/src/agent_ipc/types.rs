@@ -85,11 +85,11 @@ pub fn parse_request(line: &str) -> Result<ActionRequest, String> {
             Ok(ActionRequest::Map3DView { mode: mode as u8 })
         }
         "zoom" => {
-            let value = v.get_num("value").ok_or("missing value")?;
-            if !(1.0..=100.0).contains(&value) || !value.is_finite() {
-                return Err("zoom value out of range 1.0..=100.0".into());
+            let level = v.get_num("level").ok_or("missing level")?;
+            if !(0.0..=1.0).contains(&level) || !level.is_finite() {
+                return Err("zoom level out of range 0.0..=1.0".into());
             }
-            Ok(ActionRequest::MapZoom { value: value as f32 })
+            Ok(ActionRequest::MapZoom { value: level as f32 })
         }
         "switch_account" => Ok(ActionRequest::SwitchAccount),
         other => Err(format!("unknown action '{}'", other)),
@@ -146,13 +146,22 @@ mod tests {
     }
 
     #[test]
-    fn parses_zoom() {
+    fn parses_zoom_level() {
         assert_eq!(
-            parse_request("{\"action\":\"zoom\",\"value\":12.5}").unwrap(),
-            ActionRequest::MapZoom { value: 12.5 }
+            parse_request("{\"action\":\"zoom\",\"level\":0.5}").unwrap(),
+            ActionRequest::MapZoom { value: 0.5 }
         );
-        assert!(parse_request("{\"action\":\"zoom\",\"value\":0.5}").is_err());
-        assert!(parse_request("{\"action\":\"zoom\",\"value\":999}").is_err());
+        assert_eq!(
+            parse_request("{\"action\":\"zoom\",\"level\":0.0}").unwrap(),
+            ActionRequest::MapZoom { value: 0.0 }
+        );
+        assert_eq!(
+            parse_request("{\"action\":\"zoom\",\"level\":1.0}").unwrap(),
+            ActionRequest::MapZoom { value: 1.0 }
+        );
+        assert!(parse_request("{\"action\":\"zoom\",\"level\":1.5}").is_err());
+        assert!(parse_request("{\"action\":\"zoom\",\"level\":-0.1}").is_err());
+        assert!(parse_request("{\"action\":\"zoom\",\"value\":12.5}").is_err()); // old key rejected
     }
 
     #[test]
