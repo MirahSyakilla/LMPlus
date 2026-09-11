@@ -122,4 +122,34 @@ mod tests {
         assert!(items.iter().any(|(_, action, _)| action == "swap_Inf Phal"));
         assert!(items.iter().any(|(_, action, _)| action == "misc_Speed"));
     }
+
+    #[test]
+    fn collect_shortcuts_includes_direct_actions() {
+        let settings = serde_json::json!({
+            "hotkeys": {
+                "formation_inf_phalanx": "Ctrl+1",
+                "formation_cav_wedge": "Ctrl+2",
+                "map3dview_full": "Ctrl+3",
+                "map3dview_balanced": "Ctrl+4",
+                "map3dview_none": "Ctrl+5",
+                "switch_account_direct": "Ctrl+6",
+                "zoom:12.5": "Ctrl+7",
+                "Acc1": "Ctrl+8",
+            },
+            "swap_hotkeys": {},
+            "misc_hotkeys": []
+        });
+        let items = collect_shortcuts(&settings);
+        assert_eq!(items.len(), 8);
+        // Direct entries ride in the plain "hotkeys" group; the frontend's
+        // reregisterHotkeys adds the "direct:" prefix when building the
+        // action map, so the backend just needs to pass the raw ids through.
+        assert!(items.iter().any(|(h, action, kind)| action == "formation_inf_phalanx" && kind == "account" && h == "Ctrl+1"));
+        assert!(items.iter().any(|(_, action, _)| action == "formation_cav_wedge"));
+        assert!(items.iter().any(|(_, action, _)| action == "map3dview_full"));
+        assert!(items.iter().any(|(_, action, _)| action == "map3dview_balanced"));
+        assert!(items.iter().any(|(_, action, _)| action == "map3dview_none"));
+        assert!(items.iter().any(|(_, action, _)| action == "switch_account_direct"));
+        assert!(items.iter().any(|(_, action, _)| action == "zoom:12.5"));
+    }
 }

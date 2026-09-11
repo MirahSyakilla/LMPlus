@@ -1,0 +1,15 @@
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"
+ar = "/usr/bin/llvm-lib-21"
+rustflags = [
+  "-Lnative=/home/meow/.xwin/crt/lib/x86_64",
+  "-Lnative=/home/meow/.xwin/sdk/lib/ucrt/x86_64",
+  "-Lnative=/home/meow/.xwin/sdk/lib/um/x86_64",
+  "-Lnative=/home/meow/LMPlus-Project/LMPlus-RS/agent/native",
+]
+
+[env]
+CC_x86_64_pc_windows_msvc = "/usr/bin/clang-cl-21"
+CXX_x86_64_pc_windows_msvc = "/usr/bin/clang-cl-21"
+RC_x86_64_pc_windows_msvc = "/usr/bin/llvm-rc-21"
+CFLAGS_x86_64_pc_windows_msvc = "/imsvc/home/meow/.xwin/crt/include /imsvc/home/meow/.xwin/sdk/include/ucrt /imsvc/home/meow/.xwin/sdk/include/shared /imsvc/home/meow/.xwin/sdk/include/um /imsvc/home/meow/.xwin/sdk/include/winrt /imsvc/home/meow/.xwin/sdk/include/cppwinrt"

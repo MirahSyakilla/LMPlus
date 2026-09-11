@@ -894,12 +894,53 @@ async function refreshAccounts() {
 }
 
 async function executeHotkeyAction(action: string) {
-  if (action.startsWith("swap_")) {
+  if (action.startsWith("direct:")) {
+    await executeDirectActionSpec(action.slice("direct:".length));
+  } else if (action.startsWith("swap_")) {
     await api.executeMacro(action.slice(5), exePath, processName);
   } else if (action.startsWith("misc_")) {
     await api.executeMacro(action.slice(5), exePath, processName);
   } else {
     await switchAccount(action);
+  }
+}
+
+const DIRECT_ACTION_SPECS: Record<string, api.DirectAction> = {
+  formation_inf_phalanx: { action: "formation", index: 0 },
+  formation_range_phalanx: { action: "formation", index: 1 },
+  formation_cav_phalanx: { action: "formation", index: 2 },
+  formation_inf_wedge: { action: "formation", index: 3 },
+  formation_range_wedge: { action: "formation", index: 4 },
+  formation_cav_wedge: { action: "formation", index: 5 },
+  map3dview_full: { action: "map3dview", mode: 0 },
+  map3dview_balanced: { action: "map3dview", mode: 1 },
+  map3dview_none: { action: "map3dview", mode: 2 },
+  switch_account_direct: { action: "switch_account" },
+};
+
+async function executeDirectActionSpec(spec: string) {
+  const known = DIRECT_ACTION_SPECS[spec];
+  if (known) {
+    await executeDirect(known, spec);
+    return;
+  }
+  if (spec.startsWith("zoom:")) {
+    const value = Number(spec.slice("zoom:".length));
+    if (Number.isFinite(value)) {
+      await executeDirect({ action: "mapzoom", value }, spec);
+      return;
+    }
+  }
+  addDebugLog("Unknown direct action", "warn", spec);
+}
+
+async function executeDirect(action: api.DirectAction, label: string) {
+  try {
+    const detail = await api.executeDirectAction(exePath, action);
+    addDebugLog(`Direct action: ${label}`, "info", detail);
+  } catch (e) {
+    addDebugLog(`Direct action failed: ${label}`, "error", String(e));
+    await showMessageDialog("Direct Action", `Failed to run ${label}:\n${e}`);
   }
 }
 
@@ -923,6 +964,8 @@ async function buildHotkeyRegistrationJson() {
       hotkeys[key.slice("hotkeys.".length)] = value;
     } else if (key.startsWith("swap_hotkeys.")) {
       swapHotkeys[key.slice("swap_hotkeys.".length)] = value;
+    } else if (key.startsWith("direct.")) {
+      hotkeys[key.slice("direct.".length)] = value;
     }
   }
 
@@ -946,7 +989,9 @@ async function reregisterHotkeys() {
           ? `swap_${entry.name}`
           : entry.type === "misc"
             ? `misc_${entry.name}`
-            : entry.name;
+            : DIRECT_ACTION_SPECS[entry.name]
+              ? `direct:${entry.name}`
+              : entry.name;
         return [normalizeHotkey(entry.hotkey), action];
       }),
     );
@@ -1129,10 +1174,21 @@ async function showHotkeyDialog() {
         rows.push({ name: acc, hotkey: (hotkeys[`hotkeys.${acc}`] as string) || "" });
       }
     } else if (currentHotkeyTab === 1) {
-      const formations = ["Inf Phal", "Range Phal", "Cav Phal", "Inf Wedge", "Range Wedge", "Cav Wedge"];
+      // Six native formation slots, invoked directly in-game via the agent.
+      const formations = [
+        "Inf Phal", "Range Phal", "Cav Phal", "Inf Wedge", "Range Wedge", "Cav Wedge",
+      ];
+      const directNames: Record<string, string> = {
+        "Inf Phal": "formation_inf_phalanx",
+        "Range Phal": "formation_range_phalanx",
+        "Cav Phal": "formation_cav_phalanx",
+        "Inf Wedge": "formation_inf_wedge",
+        "Range Wedge": "formation_range_wedge",
+        "Cav Wedge": "formation_cav_wedge",
+      };
       const hotkeys = await api.getHotkeySettings();
       for (const f of formations) {
-        rows.push({ name: f, hotkey: (hotkeys[`swap_hotkeys.${f}`] as string) || "" });
+        rows.push({ name: f, hotkey: (hotkeys[`direct.${directNames[f]}`] as string) || "" });
       }
     } else {
       const macros = await api.loadMiscCfg();
@@ -1190,7 +1246,7 @@ async function showHotkeyDialog() {
       if (currentHotkeyTab === 0) {
         await api.removeHotkey("hotkeys", row.name);
       } else if (currentHotkeyTab === 1) {
-        await api.removeHotkey("swap_hotkeys", row.name);
+        await api.removeHotkey("direct", FORMATION_ROW_TO_DIRECT[row.name]?.slice("direct:".length) || row.name);
       } else {
         row.hotkey = "";
         const macros = await api.loadMiscCfg();
@@ -1237,8 +1293,17 @@ async function showHotkeyDialog() {
     }
   };
 
+  const FORMATION_ROW_TO_DIRECT: Record<string, string> = {
+    "Inf Phal": "direct:formation_inf_phalanx",
+    "Range Phal": "direct:formation_range_phalanx",
+    "Cav Phal": "direct:formation_cav_phalanx",
+    "Inf Wedge": "direct:formation_inf_wedge",
+    "Range Wedge": "direct:formation_range_wedge",
+    "Cav Wedge": "direct:formation_cav_wedge",
+  };
   const actionForRow = (row: HotkeyRow, tab: number) => (
-    tab === 1 ? `swap_${row.name}` : tab === 2 ? `misc_${row.name}` : row.name
+    tab === 1 ? (FORMATION_ROW_TO_DIRECT[row.name] || `swap_${row.name}`)
+      : tab === 2 ? `misc_${row.name}` : row.name
   );
 
   const startRecording = (row: HotkeyRow, cell: HTMLElement) => {
@@ -1301,7 +1366,7 @@ async function showHotkeyDialog() {
           if (tabAtStart === 0) {
             await api.setHotkey("hotkeys", row.name, hotkey);
           } else if (tabAtStart === 1) {
-            await api.setHotkey("swap_hotkeys", row.name, hotkey);
+            await api.setHotkey("direct", FORMATION_ROW_TO_DIRECT[row.name]?.slice("direct:".length) || row.name, hotkey);
           } else {
             const macros = await api.loadMiscCfg();
             const updated = macros.map((m) => (m.name === row.name ? { ...m, hotkey } : m));

@@ -40,7 +40,7 @@ env_logger = "0.11"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-winapi = { version = "0.3", features = ["winuser", "tlhelp32", "psapi", "memoryapi", "processthreadsapi", "handleapi", "shellapi", "winbase", "minwindef", "libloaderapi", "winreg", "errhandlingapi", "winnls", "timezoneapi", "sysinfoapi"] }
+winapi = { version = "0.3", features = ["winuser", "tlhelp32", "psapi", "memoryapi", "processthreadsapi", "handleapi", "shellapi", "winbase", "minwindef", "libloaderapi", "winreg", "errhandlingapi", "winnls", "timezoneapi", "sysinfoapi", "synchapi", "winnt", "impl-default"] }
 
 [profile.release]
 panic = "abort"

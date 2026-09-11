@@ -245,6 +245,17 @@ export async function stopPersistentZoom(): Promise<void> {
   return invoke("stop_persistent_zoom");
 }
 
+// --- Direct actions (injected agent) ---
+export type DirectAction =
+  | { action: "formation"; index: number }
+  | { action: "map3dview"; mode: number }
+  | { action: "mapzoom"; value: number }
+  | { action: "switch_account" };
+
+export async function executeDirectAction(exePath: string, action: DirectAction): Promise<string> {
+  return invoke("execute_direct_action", { exePath, action });
+}
+
 // --- Telemetry ---
 export async function collectAndSendTelemetry(
   basePath: string,

@@ -1,0 +1,29 @@
+[package]
+name = "lmp-agent"
+version = "2.6.0"
+edition = "2021"
+
+[lib]
+name = "lmp_agent"
+crate-type = ["cdylib", "lib"]
+path = "src/lib.rs"
+
+[dependencies]
+winapi = { version = "0.3", features = ["winuser", "memoryapi", "processthreadsapi", "handleapi", "synchapi", "libloaderapi", "minwindef", "winnt", "errhandlingapi", "winbase", "namedpipeapi", "tlhelp32", "psapi", "fileapi"] }
+once_cell = "1"
+il2cpp-bridge-rs = "0.1.4"
+
+[target.'cfg(windows)'.dependencies]
+
+[dev-dependencies]
+
+[features]
+default = []
+host-tests = []
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

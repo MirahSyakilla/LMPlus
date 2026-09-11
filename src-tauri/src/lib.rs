@@ -1,6 +1,8 @@
 pub mod config;
 pub mod crypto;
 pub mod license;
+#[cfg(target_os = "windows")]
+pub mod lmagent;
 pub mod telemetry;
 pub mod updater;
 
@@ -630,6 +632,26 @@ fn cmd_perform_map_zoom(
     map_zoom::perform_map_zoom(exe_path, persistent)
 }
 
+#[tauri::command(rename = "execute_direct_action")]
+fn cmd_execute_direct_action(
+    state: tauri::State<RuntimeState>,
+    exe_path: String,
+    action: serde_json::Value,
+) -> Result<String, String> {
+    state.require_license()?;
+    #[cfg(target_os = "windows")]
+    {
+        let parsed: lmagent::action::LMPlusAction = serde_json::from_value(action)
+            .map_err(|e| format!("invalid action: {}", e))?;
+        lmagent::execute(&exe_path, &parsed)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (exe_path, action);
+        Err("direct actions are Windows-only".into())
+    }
+}
+
 #[tauri::command(rename = "stop_persistent_zoom")]
 fn cmd_stop_persistent_zoom(state: tauri::State<RuntimeState>) -> Result<(), String> {
     state.require_license()?;
@@ -748,6 +770,7 @@ pub fn run() {
             cmd_parse_misc_cfg,
             cmd_perform_map_zoom,
             cmd_stop_persistent_zoom,
+            cmd_execute_direct_action,
             cmd_collect_and_send_telemetry,
             cmd_increment_hide_to_tray,
             cmd_check_for_update,
