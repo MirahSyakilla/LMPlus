@@ -1,12 +1,12 @@
+use once_cell::sync::Lazy;
 use std::mem;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
-use once_cell::sync::Lazy;
-use std::sync::Mutex;
 use winapi::shared::minwindef::{DWORD, FALSE, MAX_PATH};
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::memoryapi::{ReadProcessMemory, VirtualQueryEx, WriteProcessMemory};
@@ -43,13 +43,16 @@ fn find_process_pid(exe_path: &str) -> Option<DWORD> {
 
     if unsafe { Process32FirstW(snapshot, &mut pe) } != 0 {
         loop {
-            let h_proc = unsafe {
-                OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pe.th32ProcessID)
-            };
+            let h_proc = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pe.th32ProcessID) };
             if !h_proc.is_null() {
                 let mut path: [u16; MAX_PATH] = [0; MAX_PATH];
                 let len = unsafe {
-                    GetModuleFileNameExW(h_proc, ptr::null_mut(), path.as_mut_ptr(), MAX_PATH as DWORD)
+                    GetModuleFileNameExW(
+                        h_proc,
+                        ptr::null_mut(),
+                        path.as_mut_ptr(),
+                        MAX_PATH as DWORD,
+                    )
                 };
                 let actual = String::from_utf16_lossy(&path[..len as usize]);
                 if actual.eq_ignore_ascii_case(exe_path) {
@@ -74,7 +77,12 @@ fn search_memory(handle: winapi::shared::ntdef::HANDLE) -> Option<usize> {
     loop {
         let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { mem::zeroed() };
         let result = unsafe {
-            VirtualQueryEx(handle, address as *const _, &mut mbi, mem::size_of::<MEMORY_BASIC_INFORMATION>())
+            VirtualQueryEx(
+                handle,
+                address as *const _,
+                &mut mbi,
+                mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+            )
         };
         if result == 0 {
             break;
@@ -111,7 +119,9 @@ fn search_memory(handle: winapi::shared::ntdef::HANDLE) -> Option<usize> {
                     while i + 3 < bytes_read {
                         let addr = current + i;
                         if (addr & 0xFFF) == ADDR_SUFFIX {
-                            let value: DWORD = unsafe { ptr::read_unaligned(buffer.as_ptr().add(i) as *const DWORD) };
+                            let value: DWORD = unsafe {
+                                ptr::read_unaligned(buffer.as_ptr().add(i) as *const DWORD)
+                            };
                             if value == TARGET_VALUE {
                                 return Some(addr);
                             }
@@ -180,9 +190,7 @@ pub fn perform_map_zoom(exe_path: String, persistent: bool) -> Result<(), String
                 thread::sleep(Duration::from_millis(100));
 
                 let mut exit_code: DWORD = 0;
-                if unsafe { GetExitCodeProcess(process, &mut exit_code) } == 0
-                    || exit_code != 259
-                {
+                if unsafe { GetExitCodeProcess(process, &mut exit_code) } == 0 || exit_code != 259 {
                     *PERSISTENT_PID.lock().unwrap() = 0;
                     *PERSISTENT_ADDR.lock().unwrap() = 0;
                     break;

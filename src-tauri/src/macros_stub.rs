@@ -1,5 +1,9 @@
 #[tauri::command]
-pub fn execute_macro(_macro_name: String, _exe_path: String, _process_name: String) -> Result<(), String> {
+pub fn execute_macro(
+    _macro_name: String,
+    _exe_path: String,
+    _process_name: String,
+) -> Result<(), String> {
     Ok(())
 }
 

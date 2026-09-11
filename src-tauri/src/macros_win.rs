@@ -1,9 +1,9 @@
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::mem;
 use std::ptr;
-use std::time::{Duration, Instant};
-use once_cell::sync::Lazy;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use winapi::shared::minwindef::{DWORD, FALSE, MAX_PATH};
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::processthreadsapi::OpenProcess;
@@ -12,10 +12,10 @@ use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use winapi::um::winuser::{
-    ClientToScreen, FindWindowExW, GetClientRect, GetCursorPos,
-    GetSystemMetrics, GetWindowThreadProcessId, IsWindowVisible, SendInput, SetCursorPos,
-    INPUT, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MOVE, SM_CXSCREEN, SM_CYSCREEN,
+    ClientToScreen, FindWindowExW, GetClientRect, GetCursorPos, GetSystemMetrics,
+    GetWindowThreadProcessId, IsWindowVisible, SendInput, SetCursorPos, INPUT, INPUT_MOUSE,
+    MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, SM_CXSCREEN,
+    SM_CYSCREEN,
 };
 
 static LAST_MACRO_TIME: Lazy<Mutex<Instant>> = Lazy::new(|| Mutex::new(Instant::now()));
@@ -35,23 +35,42 @@ fn find_game_window(exe_path: &str, process_name: &str) -> Option<winapi::shared
     if unsafe { Process32FirstW(snapshot, &mut pe) } != 0 {
         loop {
             let name = String::from_utf16_lossy(
-                &pe.szExeFile[..pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(pe.szExeFile.len())],
+                &pe.szExeFile[..pe
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(pe.szExeFile.len())],
             );
             if name.eq_ignore_ascii_case(process_name) {
                 let pid = pe.th32ProcessID;
                 let h_proc = unsafe {
                     OpenProcess(
-                        winapi::um::winnt::PROCESS_QUERY_INFORMATION | winapi::um::winnt::PROCESS_VM_READ,
+                        winapi::um::winnt::PROCESS_QUERY_INFORMATION
+                            | winapi::um::winnt::PROCESS_VM_READ,
                         FALSE,
                         pid,
                     )
                 };
                 if !h_proc.is_null() {
                     let mut path: [u16; MAX_PATH] = [0; MAX_PATH];
-                    let len = unsafe { GetModuleFileNameExW(h_proc, ptr::null_mut(), path.as_mut_ptr(), MAX_PATH as DWORD) };
+                    let len = unsafe {
+                        GetModuleFileNameExW(
+                            h_proc,
+                            ptr::null_mut(),
+                            path.as_mut_ptr(),
+                            MAX_PATH as DWORD,
+                        )
+                    };
                     let actual = String::from_utf16_lossy(&path[..len as usize]);
                     if actual.eq_ignore_ascii_case(exe_path) {
-                        let mut w = unsafe { FindWindowExW(ptr::null_mut(), ptr::null_mut(), ptr::null(), ptr::null()) };
+                        let mut w = unsafe {
+                            FindWindowExW(
+                                ptr::null_mut(),
+                                ptr::null_mut(),
+                                ptr::null(),
+                                ptr::null(),
+                            )
+                        };
                         while !w.is_null() {
                             let mut w_pid: DWORD = 0;
                             unsafe { GetWindowThreadProcessId(w, &mut w_pid) };
@@ -59,7 +78,9 @@ fn find_game_window(exe_path: &str, process_name: &str) -> Option<winapi::shared
                                 hwnd = Some(w);
                                 break;
                             }
-                            w = unsafe { FindWindowExW(ptr::null_mut(), w, ptr::null(), ptr::null()) };
+                            w = unsafe {
+                                FindWindowExW(ptr::null_mut(), w, ptr::null(), ptr::null())
+                            };
                         }
                     }
                     unsafe { CloseHandle(h_proc) };
@@ -164,7 +185,11 @@ fn load_misc_macros() -> HashMap<String, Vec<(i32, i32)>> {
 }
 
 #[tauri::command]
-pub fn execute_macro(macro_name: String, exe_path: String, process_name: String) -> Result<(), String> {
+pub fn execute_macro(
+    macro_name: String,
+    exe_path: String,
+    process_name: String,
+) -> Result<(), String> {
     let mut last = LAST_MACRO_TIME.lock().map_err(|e| e.to_string())?;
     if last.elapsed().as_millis() < DEBOUNCE_MS as u128 {
         return Ok(());
@@ -174,7 +199,10 @@ pub fn execute_macro(macro_name: String, exe_path: String, process_name: String)
 
     let coords = get_formation_coords(&macro_name);
     let points = if coords.is_empty() {
-        load_misc_macros().get(&macro_name).cloned().unwrap_or_default()
+        load_misc_macros()
+            .get(&macro_name)
+            .cloned()
+            .unwrap_or_default()
     } else {
         coords
     };

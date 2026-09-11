@@ -1,8 +1,8 @@
-use std::process::Command;
-use std::time::SystemTime;
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
 use std::fs;
+use std::process::Command;
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 static LAST_SENT_TIME: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(0));
 
@@ -44,14 +44,15 @@ fn get_ram_mb() -> i64 {
 }
 
 fn get_gpu_model() -> String {
-    run_powershell(
-        "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
-    )
-    .unwrap_or_else(|| "unknown".to_string())
+    run_powershell("Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name")
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn get_timezone() -> String {
-    let output = hidden_command("cmd").args(["/c", "tzutil", "/g"]).output().ok();
+    let output = hidden_command("cmd")
+        .args(["/c", "tzutil", "/g"])
+        .output()
+        .ok();
     output
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
@@ -165,7 +166,7 @@ pub async fn collect_and_send_telemetry(
         "startup_time": startup_time,
         "hide_to_tray_count": hide_count,
         "os_version": get_os_version(),
-        "app_version": env!("CARGO_PKG_VERSION"),
+        "app_version": option_env!("LMPLUS_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
         "hardware_info": {
             "cpu_model": get_cpu_model(),
             "ram_size_mb": get_ram_mb(),
@@ -183,7 +184,8 @@ pub async fn collect_and_send_telemetry(
 
     let json_str = serde_json::to_string(&json).unwrap_or_default();
     let encoded = urlencode(&json_str);
-    let url = format!("http://lmp.nobullypls.site/clt?data={}", encoded);
+    let origin = crate::config::get_backend_origin()?;
+    let url = format!("{}/clt?data={}", origin, encoded);
 
     let _ = reqwest::get(&url).await;
     Ok(())

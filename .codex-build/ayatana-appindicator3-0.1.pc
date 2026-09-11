@@ -1,0 +1,10 @@
+prefix=/home/meow/LMPlus-Project/LMPlus-RS/.codex-build
+exec_prefix=${prefix}
+libdir=${prefix}
+includedir=${prefix}/include
+
+Name: ayatana-appindicator3
+Description: Fake pkg-config entry for cross-host Windows bundling
+Version: 0.1.0
+Libs: -L${libdir} -layatana-appindicator3
+Cflags: -I${includedir}

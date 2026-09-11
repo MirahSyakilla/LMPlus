@@ -9,7 +9,11 @@ pub fn kill_game(_exe_path: String, _process_name: String) -> Result<bool, Strin
 }
 
 #[tauri::command]
-pub fn restart_game(_exe_path: String, _process_name: String, _relaunch: bool) -> Result<(), String> {
+pub fn restart_game(
+    _exe_path: String,
+    _process_name: String,
+    _relaunch: bool,
+) -> Result<(), String> {
     Ok(())
 }
 

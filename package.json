@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "deploy:backend:preview": "bash scripts/deploy-backend-preview.sh",
+    "sync:backend:secrets": "bash scripts/sync-backend-secrets.sh",
+    "release:beta": "bash scripts/publish-beta-release.sh",
+    "release:beta:signed": "bash scripts/publish-signed-beta-release.sh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

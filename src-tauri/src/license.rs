@@ -2,16 +2,16 @@ use aes::cipher::block_padding::Pkcs7;
 use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use base64::Engine;
 use hmac::Mac;
+use sha2::Digest;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
 const SERVER_PUBKEY_PEM: &str = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA785rTbA9EYjsITD0kjnx\nYAO9+lYcH836cdn9YsByxdG6/WYJqByL4ZPSOS3nCSTTl+NGUnSnffUs1Da6R6OU\nVpBpu9KdIrfPv4RWPZk2a9pcOqDC/bqcQ1deJWpUGDLjxzrkuXhxjXigg2jroGwY\nNLrE4KpHRcsQIpPubApambBSANjVNfWMlo42dm7sJg671xuuxwPz5+CxHo3vRDDp\n0whqDhn+e/nOV4rpxOb+z/XdA2iWJ9uj+dYXVwzWjkYNrzZz8ob14zSSeqURpzDK\nQJ6oT6quWu9vrZT+H9DZ5NGg0MAZ2gnc7Un/pBnobhCqgbRtaZGZ0nrvgWGFNM2z\niwIDAQAB\n-----END PUBLIC KEY-----";
-
-const VERIFY_URL: &str = "https://lmp.nobullypls.site/verify";
 
 fn exe_dir() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("Failed to get exe path: {}", e))?;
@@ -141,10 +141,7 @@ fn verify_config_signature(fingerprint: &str) -> Result<bool, String> {
     Ok(computed == stored_sig)
 }
 
-fn sign_config(
-    map: &mut BTreeMap<String, BTreeMap<String, String>>,
-    fingerprint: &str,
-) {
+fn sign_config(map: &mut BTreeMap<String, BTreeMap<String, String>>, fingerprint: &str) {
     let sig = compute_config_signature(map, fingerprint);
     map.entry("license".to_string())
         .or_default()
@@ -164,8 +161,9 @@ fn verify_server_signature(payload: &str, sig_b64: &str) -> Result<bool, String>
         .map_err(|e| format!("Failed to decode signature: {}", e))?;
 
     let scheme = Pkcs1v15Sign::new::<sha2::Sha256>();
+    let digest = sha2::Sha256::digest(payload.as_bytes());
     scheme
-        .verify(&pub_key, payload.as_bytes(), &sig)
+        .verify(&pub_key, &digest, &sig)
         .map(|_| true)
         .map_err(|e| format!("Signature verification failed: {}", e))
 }
@@ -186,18 +184,16 @@ fn urlencode(s: &str) -> String {
 }
 
 #[tauri::command]
-pub async fn verify_license(
-    key: String,
-    fingerprint: String,
-) -> Result<serde_json::Value, String> {
+pub async fn verify_license(key: String, fingerprint: String) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
+        .timeout(Duration::from_secs(12))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let origin = crate::config::get_backend_origin()?;
 
     let url = format!(
-        "{}?k={}&d={}&v=2",
-        VERIFY_URL,
+        "{}/verify?k={}&d={}&v=2",
+        origin,
         urlencode(&key),
         urlencode(&fingerprint)
     );
@@ -210,7 +206,10 @@ pub async fn verify_license(
         .map_err(|e| format!("Request failed: {}", e))?;
 
     let status = resp.status();
-    let body = resp.text().await.map_err(|e| format!("Read response: {}", e))?;
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("Read response: {}", e))?;
 
     if !status.is_success() {
         return Err(format!("Server error: {}", status));
@@ -245,10 +244,7 @@ pub async fn verify_license(
         license.insert("ek".to_string(), encrypted);
         license.insert("exp".to_string(), exp.to_string());
         license.insert("token".to_string(), token.to_string());
-        license.insert(
-            "last_attempt".to_string(),
-            chrono::Utc::now().to_rfc3339(),
-        );
+        license.insert("last_attempt".to_string(), chrono::Utc::now().to_rfc3339());
         license.insert("attempt_count".to_string(), "0".to_string());
         sign_config(&mut map, &fingerprint);
         write_config(&map)?;

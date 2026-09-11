@@ -3,15 +3,41 @@ use std::mem;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::process::CommandExt;
 use std::ptr;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use winapi::shared::minwindef::{DWORD, FALSE, HMODULE, MAX_PATH};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::handleapi::CloseHandle;
-use winapi::um::processthreadsapi::{CreateProcessW, OpenProcess, TerminateProcess, PROCESS_INFORMATION, STARTUPINFOW};
+use winapi::um::processthreadsapi::{
+    CreateProcessW, OpenProcess, TerminateProcess, PROCESS_INFORMATION, STARTUPINFOW,
+};
 use winapi::um::psapi::{EnumProcessModules, GetModuleFileNameExW};
-use winapi::um::winbase::CREATE_NO_WINDOW;
 use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
+use winapi::um::winbase::CREATE_NO_WINDOW;
+
+static SWITCH_LOCK: Mutex<()> = Mutex::new(());
+
+const PROCESS_DEATH_TIMEOUT: Duration = Duration::from_secs(10);
+const PROCESS_DEATH_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+fn wait_for_process_death(exe_path: &str, process_name: &str) -> Result<(), String> {
+    let deadline = Instant::now() + PROCESS_DEATH_TIMEOUT;
+    loop {
+        if find_process_by_exe_path(exe_path, process_name)?.is_none() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "Process did not terminate within {}s: {}",
+                PROCESS_DEATH_TIMEOUT.as_secs(),
+                process_name
+            ));
+        }
+        std::thread::sleep(PROCESS_DEATH_POLL_INTERVAL);
+    }
+}
 
 fn to_wide(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(Some(0)).collect()
@@ -20,7 +46,9 @@ fn to_wide(s: &str) -> Vec<u16> {
 fn find_process_by_exe_path(exe_path: &str, process_name: &str) -> Result<Option<DWORD>, String> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot.is_null() || snapshot == winapi::um::handleapi::INVALID_HANDLE_VALUE {
-        return Err(format!("CreateToolhelp32Snapshot failed: {}", unsafe { GetLastError() }));
+        return Err(format!("CreateToolhelp32Snapshot failed: {}", unsafe {
+            GetLastError()
+        }));
     }
 
     let mut pe: PROCESSENTRY32W = unsafe { mem::zeroed() };
@@ -31,7 +59,11 @@ fn find_process_by_exe_path(exe_path: &str, process_name: &str) -> Result<Option
     if unsafe { Process32FirstW(snapshot, &mut pe) } != 0 {
         loop {
             let name = String::from_utf16_lossy(
-                &pe.szExeFile[..pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(pe.szExeFile.len())],
+                &pe.szExeFile[..pe
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(pe.szExeFile.len())],
             );
 
             if name.eq_ignore_ascii_case(process_name) {
@@ -68,13 +100,22 @@ fn verify_process_path(pid: DWORD, expected_path: &str) -> Result<Option<bool>, 
 
     let mut h_mod: HMODULE = ptr::null_mut();
     let mut cb_needed: DWORD = 0;
-    if unsafe { EnumProcessModules(handle, &mut h_mod, mem::size_of::<HMODULE>() as DWORD, &mut cb_needed) } == 0 {
+    if unsafe {
+        EnumProcessModules(
+            handle,
+            &mut h_mod,
+            mem::size_of::<HMODULE>() as DWORD,
+            &mut cb_needed,
+        )
+    } == 0
+    {
         unsafe { CloseHandle(handle) };
         return Ok(None);
     }
 
     let mut path_buf: [u16; MAX_PATH] = [0; MAX_PATH];
-    let len = unsafe { GetModuleFileNameExW(handle, h_mod, path_buf.as_mut_ptr(), MAX_PATH as DWORD) };
+    let len =
+        unsafe { GetModuleFileNameExW(handle, h_mod, path_buf.as_mut_ptr(), MAX_PATH as DWORD) };
     unsafe { CloseHandle(handle) };
 
     if len == 0 {
@@ -88,7 +129,9 @@ fn verify_process_path(pid: DWORD, expected_path: &str) -> Result<Option<bool>, 
 fn count_instances(process_name: &str) -> Result<u32, String> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot.is_null() || snapshot == winapi::um::handleapi::INVALID_HANDLE_VALUE {
-        return Err(format!("CreateToolhelp32Snapshot failed: {}", unsafe { GetLastError() }));
+        return Err(format!("CreateToolhelp32Snapshot failed: {}", unsafe {
+            GetLastError()
+        }));
     }
 
     let mut pe: PROCESSENTRY32W = unsafe { mem::zeroed() };
@@ -99,7 +142,11 @@ fn count_instances(process_name: &str) -> Result<u32, String> {
     if unsafe { Process32FirstW(snapshot, &mut pe) } != 0 {
         loop {
             let name = String::from_utf16_lossy(
-                &pe.szExeFile[..pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(pe.szExeFile.len())],
+                &pe.szExeFile[..pe
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(pe.szExeFile.len())],
             );
             if name.eq_ignore_ascii_case(process_name) {
                 count += 1;
@@ -145,7 +192,9 @@ pub fn launch_game(exe_path: String, process_name: String) -> Result<(), String>
     };
 
     if result == 0 {
-        return Err(format!("CreateProcessW failed: {}", unsafe { GetLastError() }));
+        return Err(format!("CreateProcessW failed: {}", unsafe {
+            GetLastError()
+        }));
     }
 
     unsafe {
@@ -168,7 +217,9 @@ pub fn kill_game(exe_path: String, process_name: String) -> Result<bool, String>
             let result = unsafe { TerminateProcess(handle, 0) };
             unsafe { CloseHandle(handle) };
             if result == 0 {
-                Err(format!("TerminateProcess failed: {}", unsafe { GetLastError() }))
+                Err(format!("TerminateProcess failed: {}", unsafe {
+                    GetLastError()
+                }))
             } else {
                 Ok(true)
             }
@@ -179,10 +230,12 @@ pub fn kill_game(exe_path: String, process_name: String) -> Result<bool, String>
 
 #[tauri::command]
 pub fn restart_game(exe_path: String, process_name: String, relaunch: bool) -> Result<(), String> {
+    let _guard = SWITCH_LOCK.lock().map_err(|e| format!("Switch lock: {}", e))?;
+
     kill_game(exe_path.clone(), process_name.clone())?;
 
     if relaunch {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        wait_for_process_death(&exe_path, &process_name)?;
         launch_game(exe_path, process_name)?;
     }
 

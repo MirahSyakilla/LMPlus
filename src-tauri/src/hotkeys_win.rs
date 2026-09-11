@@ -1,7 +1,6 @@
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 static HOTKEY_ACTIONS: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -36,17 +35,31 @@ fn collect_shortcuts(settings: &serde_json::Value) -> Vec<(String, String, Strin
     if let Some(swap_hotkeys) = settings.get("swap_hotkeys").and_then(|v| v.as_object()) {
         for (name, value) in swap_hotkeys {
             if let Some(hotkey) = value.as_str().filter(|v| !v.trim().is_empty()) {
-                items.push((hotkey.to_string(), format!("swap_{}", name), "swap".to_string()));
+                items.push((
+                    hotkey.to_string(),
+                    format!("swap_{}", name),
+                    "swap".to_string(),
+                ));
             }
         }
     }
 
     if let Some(misc_hotkeys) = settings.get("misc_hotkeys").and_then(|v| v.as_array()) {
         for item in misc_hotkeys {
-            let name = item.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-            let hotkey = item.get("hotkey").and_then(|v| v.as_str()).unwrap_or_default();
+            let name = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let hotkey = item
+                .get("hotkey")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             if !name.is_empty() && !hotkey.trim().is_empty() {
-                items.push((hotkey.to_string(), format!("misc_{}", name), "misc".to_string()));
+                items.push((
+                    hotkey.to_string(),
+                    format!("misc_{}", name),
+                    "misc".to_string(),
+                ));
             }
         }
     }
@@ -56,24 +69,19 @@ fn collect_shortcuts(settings: &serde_json::Value) -> Vec<(String, String, Strin
 
 #[tauri::command]
 pub fn register_hotkeys(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     _accounts_path: String,
     settings_json: String,
 ) -> Result<serde_json::Value, String> {
-    unregister_hotkeys(app.clone())?;
-
     let settings: serde_json::Value =
         serde_json::from_str(&settings_json).map_err(|e| format!("JSON parse: {}", e))?;
 
     let shortcuts = collect_shortcuts(&settings);
-    let manager = app.global_shortcut();
     let mut actions = HOTKEY_ACTIONS.lock().map_err(|e| e.to_string())?;
+    actions.clear();
     let mut registered = Vec::new();
 
     for (hotkey, action, kind) in shortcuts {
-        manager
-            .register(hotkey.as_str())
-            .map_err(|e| format!("Failed to register {}: {}", hotkey, e))?;
         actions.insert(normalize_shortcut(&hotkey), action.clone());
         actions.insert(hotkey.clone(), action.clone());
         registered.push(serde_json::json!({
@@ -87,18 +95,7 @@ pub fn register_hotkeys(
 }
 
 #[tauri::command]
-pub fn unregister_hotkeys(app: tauri::AppHandle) -> Result<(), String> {
-    let keys: Vec<String> = HOTKEY_ACTIONS
-        .lock()
-        .map_err(|e| e.to_string())?
-        .keys()
-        .cloned()
-        .collect();
-
-    let manager = app.global_shortcut();
-    for key in keys {
-        let _ = manager.unregister(key.as_str());
-    }
+pub fn unregister_hotkeys(_app: tauri::AppHandle) -> Result<(), String> {
     HOTKEY_ACTIONS.lock().map_err(|e| e.to_string())?.clear();
     Ok(())
 }

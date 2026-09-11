@@ -14,17 +14,19 @@
     "windows": [
       {
         "title": "LMPlus",
-        "width": 450,
-        "height": 440,
+        "width": 520,
+        "height": 620,
         "resizable": false,
         "maximizable": false,
-        "visible": true,
+        "devtools": false,
+        "visible": false,
         "center": true,
-        "decorations": true
+        "decorations": true,
+        "theme": "Dark"
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' asset: https://asset.localhost; connect-src 'self' ipc: http://ipc.localhost; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     }
   },
   "bundle": {
@@ -43,6 +45,10 @@
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
         "installerHooks": "windows-installer-hooks.nsh"
+      },
+      "signCommand": {
+        "cmd": "bash",
+        "args": ["sign-windows-installer.sh", "%1"]
       }
     }
   },

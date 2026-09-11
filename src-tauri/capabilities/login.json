@@ -1,0 +1,9 @@
+{
+  "identifier": "login",
+  "description": "Capability for the login window before license verification",
+  "windows": ["login"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:window:allow-is-visible"
+  ]
+}

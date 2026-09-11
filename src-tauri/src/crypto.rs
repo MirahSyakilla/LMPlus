@@ -101,7 +101,12 @@ mod tests {
     #[test]
     fn aes_roundtrip_empty_aligned_lengths() {
         let key = test_key_hex();
-        for s in ["", "a", "exactly16bytes!!", "exactly32byteslongstring!!!!!!!!"] {
+        for s in [
+            "",
+            "a",
+            "exactly16bytes!!",
+            "exactly32byteslongstring!!!!!!!!",
+        ] {
             let enc = encrypt_aes256_cbc(s.to_string(), key.clone()).unwrap();
             let dec = decrypt_aes256_cbc(enc, key.clone()).unwrap();
             assert_eq!(dec, s);
@@ -118,7 +123,9 @@ mod tests {
     fn aes_ciphertext_has_iv_prefix() {
         let key = test_key_hex();
         let enc = encrypt_aes256_cbc("test".into(), key).unwrap();
-        let raw = base64::engine::general_purpose::STANDARD.decode(&enc).unwrap();
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(&enc)
+            .unwrap();
         assert!(raw.len() >= 16 + 16);
         assert_eq!(raw.len() % 16, 0);
     }
@@ -136,7 +143,9 @@ mod tests {
         // RFC 4231 test case 1
         let key_hex = hex::encode([0x0bu8; 20]);
         let out = hmac_sha256("Hi There".into(), key_hex).unwrap();
-        let raw = base64::engine::general_purpose::STANDARD.decode(&out).unwrap();
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(&out)
+            .unwrap();
         assert_eq!(
             hex::encode(raw),
             "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"

@@ -25,12 +25,35 @@ export interface UpdateInfo {
   update_available: boolean;
   latest_version: string;
   current_version: string;
+  download_url: string;
   zip_url: string;
+  asset_kind?: string;
+  release_channel?: string;
+  current_channel?: string;
+  channel_switch_required?: boolean;
+}
+
+export interface UpdateProgress {
+  phase: "preparing" | "downloading" | "extracting" | "installing" | "restarting" | "error";
+  unit: "none" | "bytes" | "files";
+  downloaded: number;
+  total?: number | null;
+  speed_bps?: number | null;
+  message?: string | null;
 }
 
 export interface LicenseResult {
   status: string;
   license_info?: string;
+}
+
+export interface LicenseHeartbeatStatus {
+  status: "ok" | "grace" | "locked";
+  locked: boolean;
+  terminal: boolean;
+  failure_count: number;
+  grace_remaining_ms: number;
+  reason?: string | null;
 }
 
 // --- App paths ---
@@ -42,6 +65,10 @@ export async function setBasePath(path: string): Promise<void> {
   return invoke("set_base_path", { path });
 }
 
+export async function suggestDirectories(input: string): Promise<string[]> {
+  return invoke("suggest_directories", { input });
+}
+
 // --- Version ---
 export async function getVersion(): Promise<string> {
   return invoke("get_version");
@@ -50,6 +77,10 @@ export async function getVersion(): Promise<string> {
 // --- License ---
 export async function verifyLicense(key: string, fingerprint: string): Promise<LicenseResult> {
   return invoke("verify_license", { key, fingerprint });
+}
+
+export async function checkLicenseHeartbeat(fingerprint: string): Promise<LicenseHeartbeatStatus> {
+  return invoke("check_license_heartbeat", { fingerprint });
 }
 
 export async function loadSavedLicense(fingerprint: string): Promise<{ key: string | null }> {
@@ -68,6 +99,18 @@ export async function setLicenseInfo(info: string): Promise<void> {
   return invoke("set_license_info", { info });
 }
 
+export async function isLicenseVerified(): Promise<boolean> {
+  return invoke("is_license_verified");
+}
+
+export async function exitApp(): Promise<void> {
+  return invoke("exit_app");
+}
+
+export async function showAuthorizedMainWindow(): Promise<void> {
+  return invoke("show_authorized_main_window");
+}
+
 // --- Fingerprint ---
 export async function getDeviceFingerprint(): Promise<string> {
   return invoke("get_device_fingerprint");
@@ -78,11 +121,29 @@ export async function loadAccounts(basePath: string): Promise<string[]> {
   return invoke("load_accounts", { basePath });
 }
 
-export async function getSettings(): Promise<{ basePath: string; accountOrder: string[] }> {
+export async function getSettings(): Promise<{
+  basePath: string;
+  accountOrder: string[];
+  releaseChannel: string;
+  appliedReleaseChannel?: string;
+  debugFeatures?: boolean;
+  autoLogin?: boolean;
+}> {
   return invoke("get_settings");
 }
 
-export async function setSettings(settings: { basePath: string }): Promise<void> {
+export async function getLoginSettings(): Promise<{
+  autoLogin?: boolean;
+}> {
+  return invoke("get_login_settings");
+}
+
+export async function setSettings(settings: {
+  basePath?: string;
+  releaseChannel?: string;
+  debugFeatures?: boolean;
+  autoLogin?: boolean;
+}): Promise<void> {
   return invoke("set_settings", { settings });
 }
 
@@ -212,8 +273,8 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
   return invoke("check_for_update");
 }
 
-export async function performUpdate(zipUrl: string): Promise<void> {
-  return invoke("perform_update", { zipUrl });
+export async function performUpdate(downloadUrl: string): Promise<void> {
+  return invoke("perform_update", { downloadUrl });
 }
 
 // --- Crypto ---

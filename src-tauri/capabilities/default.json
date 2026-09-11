@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
+  "windows": ["main", "debug"],
   "permissions": [
     "core:default",
     "shell:allow-open",
@@ -19,6 +19,10 @@
     "core:window:allow-set-size",
     "core:window:allow-set-position",
     "core:window:allow-center",
+    "core:window:allow-destroy",
+    "core:window:allow-create",
+    "core:webview:allow-create-webview-window",
+    "core:webview:deny-internal-toggle-devtools",
     "core:tray:default"
   ]
 }
