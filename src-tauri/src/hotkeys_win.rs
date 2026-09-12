@@ -9,6 +9,14 @@ static HOTKEY_ACTIONS: Lazy<Mutex<HashMap<String, String>>> =
 static HOTKEY_IDS: Lazy<Mutex<HashMap<u32, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Recognize direct-action ids stored under the plain hotkeys group.
+pub fn is_direct_action(action: &str) -> bool {
+    action.starts_with("formation_")
+        || action.starts_with("map3dview_")
+        || action.starts_with("zoom:")
+        || action == "switch_account_direct"
+}
+
 pub fn action_for_shortcut_id(id: u32) -> Option<String> {
     HOTKEY_IDS.lock().ok()?.get(&id).cloned()
 }
@@ -99,14 +107,22 @@ pub fn register_hotkeys(
     let mut registered = Vec::new();
 
     for (hotkey, action, kind) in shortcuts {
+        // Direct entries ride in the plain "hotkeys" group with bare names
+        // (formation_inf_phalanx, map3dview_full, zoom:0.5, switch_account_direct).
+        // Prefix them here so the global handler can route them natively.
+        let routed_action = if is_direct_action(&action) {
+            format!("direct:{}", action)
+        } else {
+            action.clone()
+        };
         match gs.register(hotkey.as_str()) {
             Ok(()) => {
-                actions.insert(normalize_shortcut(&hotkey), action.clone());
-                actions.insert(hotkey.clone(), action.clone());
+                actions.insert(normalize_shortcut(&hotkey), routed_action.clone());
+                actions.insert(hotkey.clone(), routed_action.clone());
                 // Parse the same string the plugin parsed to get the identical
                 // shortcut id (hash of modifiers+key).
                 if let Ok(sc) = hotkey.parse::<tauri_plugin_global_shortcut::Shortcut>() {
-                    ids.insert(sc.id(), action.clone());
+                    ids.insert(sc.id(), routed_action);
                 }
                 registered.push(serde_json::json!({
                     "name": action.trim_start_matches("swap_").trim_start_matches("misc_"),

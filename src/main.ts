@@ -894,8 +894,11 @@ async function refreshAccounts() {
 }
 
 async function executeHotkeyAction(action: string) {
-  if (action.startsWith("direct:")) {
-    await executeDirectActionSpec(action.slice("direct:".length));
+  while (action.startsWith("direct:")) {
+    action = action.slice("direct:".length);
+  }
+  if (DIRECT_ACTION_SPECS[action] || action.startsWith("zoom:")) {
+    await executeDirectActionSpec(action);
   } else if (action.startsWith("swap_")) {
     await api.executeMacro(action.slice(5), exePath, processName);
   } else if (action.startsWith("misc_")) {

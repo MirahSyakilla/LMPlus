@@ -90,6 +90,10 @@ fn run_action(req: ActionRequest) -> ActionResponse {
             alog::set_base_dir(&dir);
             ActionResponse::Ok("logdir set".into())
         }
+        ActionRequest::IsTyping => match crate::mapview::is_typing() {
+            Ok(t) => ActionResponse::Ok(if t { "true".into() } else { "false".into() }),
+            Err(e) => ActionResponse::Err(e),
+        },
         ActionRequest::Formation { index } => match formation::set_formation(index) {
             Ok(()) => ActionResponse::Ok(format!("formation {}", index)),
             Err(e) => ActionResponse::Err(e),

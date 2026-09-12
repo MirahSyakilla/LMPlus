@@ -2,6 +2,7 @@
 pub enum ActionRequest {
     Ping,
     LogDir(String),
+    IsTyping,
     Formation { index: u8 },
     Map3DView { mode: u8 },
     MapZoom { value: f32 },
@@ -12,6 +13,12 @@ pub enum ActionRequest {
 pub enum ActionResponse {
     Ok(String),
     Err(String),
+}
+
+impl ActionResponse {
+    pub fn is_ok_true(&self) -> bool {
+        matches!(self, ActionResponse::Ok(d) if d == "true")
+    }
 }
 
 pub const FORMATION_COUNT: usize = 6; // Infantry/Ranged/Cavalry × Phalanx/Wedge
@@ -66,6 +73,7 @@ pub fn parse_request(line: &str) -> Result<ActionRequest, String> {
     match v.get_str("action").ok_or("missing action")?.as_str() {
         "ping" => Ok(ActionRequest::Ping),
         "logdir" => Ok(ActionRequest::LogDir(v.get_str("dir").unwrap_or_default())),
+        "istyping" => Ok(ActionRequest::IsTyping),
         "formation" => {
             let index = v.get_num("index").ok_or("missing index")?;
             if index < 0.0 || index.floor() != index || index as usize >= FORMATION_COUNT {

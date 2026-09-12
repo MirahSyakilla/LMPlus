@@ -159,3 +159,62 @@ fn do_set_camera_dist(dist: f32) -> Result<(), String> {
     // No RefreshCamera call: set_CameraDist handles it internally (RE-verified).
     Ok(())
 }
+
+/// True when the game has a text input focused (chat / mail compose / search).
+/// EventSystem.current.currentSelectedGameObject -> GetComponent(InputField|TMP_InputField).
+pub fn is_typing() -> Result<bool, String> {
+    il2cpp::ensure_bridge()?;
+
+    let es = il2cpp_bridge_rs::api::cache::csharp()
+        .class("UnityEngine.EventSystems.EventSystem")
+        .or_else(|| il2cpp_bridge_rs::api::cache::coremodule()
+            .class("UnityEngine.EventSystems.EventSystem"))
+        .or_else(|| find_class_in_cache("UnityEngine.EventSystems.EventSystem"))
+        .ok_or("EventSystem class not found")?;
+
+    let current = es
+        .method("get_current")
+        .ok_or("EventSystem.get_current not found")?;
+    let es_ptr: *mut std::ffi::c_void = unsafe { current.call(&[])? };
+    if es_ptr.is_null() {
+        return Ok(false);
+    }
+    let es_obj = unsafe { il2cpp_bridge_rs::structs::Object::from_ptr(es_ptr) };
+    let get_sel = es_obj
+        .method("get_currentSelectedGameObject")
+        .ok_or("get_currentSelectedGameObject not found")?;
+    let sel_ptr: *mut std::ffi::c_void = unsafe { get_sel.call(&[])? };
+    if sel_ptr.is_null() {
+        return Ok(false); // nothing focused -> not typing
+    }
+    let sel = unsafe { il2cpp_bridge_rs::structs::Object::from_ptr(sel_ptr) };
+
+    let get_comp = match sel.method(("GetComponent", 1)) {
+        Some(m) => m,
+        None => return Ok(false),
+    };
+
+    for type_name in ["UnityEngine.UI.InputField", "TMPro.TMP_InputField"] {
+        if let Some(field_class) = find_class_in_cache(type_name) {
+            let type_obj = field_class.object;
+            if type_obj.is_null() {
+                continue;
+            }
+            let comp: *mut std::ffi::c_void = unsafe {
+                get_comp.call(&[type_obj])?
+            };
+            if !comp.is_null() {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Look up a class in the global cache by full name across all assemblies.
+fn find_class_in_cache(full_name: &str) -> Option<il2cpp_bridge_rs::structs::Class> {
+    il2cpp_bridge_rs::api::cache::CACHE
+        .classes
+        .get(full_name)
+        .map(|c| (**c).clone())
+}
