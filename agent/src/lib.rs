@@ -58,10 +58,20 @@ extern "system" fn DllMain(_hinst: *mut core::ffi::c_void, reason: u32, _reserve
             // window may not exist yet right after injection). Raw il2cpp
             // calls need no metadata hydration.
             std::thread::spawn(|| {
-                for _ in 0..60 {
+                for attempt in 0..480 {
                     if unity_thread::install() {
-                        alog::info("warmup: unity hook installed");
+                        alog::info(&format!("warmup: unity hook installed (attempt {})", attempt));
                         UNITY_READY.store(true, Ordering::SeqCst);
+                        // Keep supervising: if the game recreates its window
+                        // (resolution change, relog), reinstall on the new thread.
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(30));
+                            if !unity_thread::hook_alive() {
+                                alog::warn("pump: hook died, reinstalling");
+                                UNITY_READY.store(false, Ordering::SeqCst);
+                                break;
+                            }
+                        }
                         return;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -81,8 +91,12 @@ extern "system" fn DllMain(_hinst: *mut core::ffi::c_void, reason: u32, _reserve
 #[cfg(windows)]
 fn handle_request(req: ActionRequest) -> ActionResponse {
     alog::info(&format!("request: {:?}", req));
-    // Real actions wait for the warmup worker (bridge + hook), bounded.
+    // Real actions wait for the warmup worker (pump hook), bounded.
     if !matches!(req, ActionRequest::Ping | ActionRequest::LogDir(_)) {
+        if !UNITY_READY.load(Ordering::SeqCst) && unity_thread::install() {
+            alog::info("pump: unity hook installed on demand");
+            UNITY_READY.store(true, Ordering::SeqCst);
+        }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
         while !UNITY_READY.load(Ordering::SeqCst) {
             if std::time::Instant::now() > deadline {

@@ -49,6 +49,7 @@ pub fn set_formation(index: u8) -> Result<(), String> {
                 static IDX: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
                 let step = STEP.load(std::sync::atomic::Ordering::SeqCst);
                 if step == 0 {
+                    crate::alog::info(&format!("flow: step0 init idx={}", index));
                     IDX.store(index, std::sync::atomic::Ordering::SeqCst);
                     STEP.store(1, std::sync::atomic::Ordering::SeqCst);
                     FRAMES_LEFT.store(1, std::sync::atomic::Ordering::SeqCst);
