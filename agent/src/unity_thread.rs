@@ -32,6 +32,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: usize, lparam: isize) -> 
 
 /// Execute at most one queued closure. Called from the main-thread hook.
 pub fn pump_once() {
+    tick_frame_runner();
     let next = QUEUE
         .lock()
         .ok()
@@ -137,4 +138,29 @@ where
     }));
     rx.recv_timeout(timeout)
         .map_err(|_| "action timed out on unity thread".to_string())
+}
+
+use std::sync::Arc as StdArc;
+
+static FRAME_RUNNER: Lazy<Mutex<Option<StdArc<Mutex<Box<dyn FnMut() -> bool + Send>>>>>> =
+    Lazy::new(|| Mutex::new(None));
+
+/// Register a per-tick runner; it stays installed while the closure returns true.
+pub fn set_frame_runner(f: Box<dyn FnMut() -> bool + Send>) {
+    if let Ok(mut g) = FRAME_RUNNER.lock() {
+        *g = Some(StdArc::new(Mutex::new(f)));
+    }
+}
+
+/// Pump the registered runner (call from the Update hook every tick).
+pub fn tick_frame_runner() {
+    let next = FRAME_RUNNER.lock().ok().and_then(|mut g| g.take());
+    if let Some(runner) = next {
+        let cont = runner.lock().map(|mut f| f()).unwrap_or(false);
+        if cont {
+            if let Ok(mut g) = FRAME_RUNNER.lock() {
+                *g = Some(runner);
+            }
+        }
+    }
 }

@@ -327,3 +327,21 @@ pub fn alloc_fake_button(id: i32, status: i32) -> *mut c_void {
     }
     mem as *mut c_void
 }
+
+/// Get the class name of an object's class.
+pub fn class_name_of(obj: *mut c_void) -> Option<String> {
+    extern "C" {
+        fn il2cpp_class_get_name(klass: ClassPtr) -> *const i8;
+    }
+    let klass = unsafe { (obj as *mut *mut c_void).read() };
+    if klass.is_null() {
+        return None;
+    }
+    unsafe {
+        let n = il2cpp_class_get_name(klass);
+        if n.is_null() {
+            return None;
+        }
+        Some(std::ffi::CStr::from_ptr(n).to_string_lossy().into_owned())
+    }
+}
