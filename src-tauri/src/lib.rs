@@ -63,6 +63,8 @@ pub(crate) struct RuntimeState {
     license_info: Mutex<String>,
     license_heartbeat: Mutex<LicenseHeartbeatGate>,
     startup_time_ms: Mutex<i64>,
+    account_hotkeys_enabled: Mutex<bool>,
+    formation_hotkeys_enabled: Mutex<bool>,
 }
 
 #[derive(Default)]
@@ -93,6 +95,8 @@ impl Default for RuntimeState {
             license_info: Mutex::new(String::new()),
             license_heartbeat: Mutex::new(LicenseHeartbeatGate::default()),
             startup_time_ms: Mutex::new(0),
+            account_hotkeys_enabled: Mutex::new(true),
+            formation_hotkeys_enabled: Mutex::new(true),
         }
     }
 }
@@ -197,17 +201,39 @@ fn is_terminal_license_failure(reason: &str) -> bool {
         || lower.contains("data too short")
 }
 
+/// Small top-right toast in the LMPlus window.
+fn toast(app: &tauri::AppHandle, message: &str) {
+    use tauri::Emitter;
+    let _ = app.emit("lmplus-toast", message);
+}
+
+fn pretty_spec(spec: &str) -> &str {
+    match spec {
+        "formation_inf_phalanx" => "Formation: Infantry Phalanx",
+        "formation_range_phalanx" => "Formation: Ranged Phalanx",
+        "formation_cav_phalanx" => "Formation: Cavalry Phalanx",
+        "formation_inf_wedge" => "Formation: Infantry Wedge",
+        "formation_range_wedge" => "Formation: Ranged Wedge",
+        "formation_cav_wedge" => "Formation: Cavalry Wedge",
+        "map3dview_full" => "Map 3D View: Full",
+        "map3dview_balanced" => "Map 3D View: Balanced",
+        "map3dview_none" => "Map 3D View: None",
+        "switch_account_direct" => "Account Switch",
+        s if s.starts_with("zoom:") => "Map Zoom",
+        _ => spec,
+    }
+}
+
 /// True when the foreground window belongs to the game or LMPlus.
 fn is_game_or_lmplus_focused() -> bool {
     #[cfg(windows)]
     unsafe {
-        use winapi::shared::minwindef::MAX_PATH;
-        use winapi::um::psapi::GetModuleFileNameExW;
-        use winapi::um::winuser::GetForegroundWindow;
-        use winapi::um::winuser::GetWindowThreadProcessId;
         use winapi::um::processthreadsapi::OpenProcess;
         use winapi::um::handleapi::CloseHandle;
-        use winapi::um::winnt::PROCESS_QUERY_INFORMATION;
+        use winapi::um::winbase::QueryFullProcessImageNameW;
+        use winapi::um::winnt::PROCESS_QUERY_LIMITED_INFORMATION;
+        use winapi::um::winuser::GetForegroundWindow;
+        use winapi::um::winuser::GetWindowThreadProcessId;
 
         let hwnd = GetForegroundWindow();
         if hwnd.is_null() {
@@ -223,44 +249,40 @@ fn is_game_or_lmplus_focused() -> bool {
         if pid == our_pid {
             return true;
         }
-        // The game? Compare image path with <basePath>\Game\Lords Mobile PC.exe
-        let handle = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid);
+        // The game? Compare image path with <basePath>\Game\Lords Mobile PC.exe.
+        // Use QUERY_LIMITED_INFORMATION + QueryFullProcessImageNameW: works even
+        // when the game runs elevated (GetModuleFileNameExW can fail there).
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if handle.is_null() {
+            hlog::warn("focus check: OpenProcess(limited) failed");
             return false;
         }
-        let mut path: [u16; MAX_PATH] = [0; MAX_PATH];
-        let len = GetModuleFileNameExW(handle, std::ptr::null_mut(), path.as_mut_ptr(), MAX_PATH as u32);
+        let mut path: [u16; 1024] = [0; 1024];
+        let mut size: u32 = 1024;
+        let ok = QueryFullProcessImageNameW(handle, 0, path.as_mut_ptr(), &mut size);
         CloseHandle(handle);
-        if len == 0 {
+        if ok == 0 || size == 0 {
+            hlog::warn("focus check: QueryFullProcessImageNameW failed");
             return false;
         }
-        let exe = String::from_utf16_lossy(&path[..len as usize]);
+        let exe = String::from_utf16_lossy(&path[..size as usize]);
         let base = current_base_path();
         let game_exe = format!(
             "{}\\Game\\Lords Mobile PC.exe",
             base.trim_end_matches(['\\', '/'])
         );
-        exe.eq_ignore_ascii_case(&game_exe)
+        let matched = exe.eq_ignore_ascii_case(&game_exe);
+        if !matched {
+            hlog::info(&format!(
+                "focus check: foreground \"{}\" != game \"{}\"",
+                exe, game_exe
+            ));
+        }
+        matched
     }
     #[cfg(not(windows))]
     {
         true
-    }
-}
-
-/// Blocking check (runs on the hotkey thread): is a game text input focused?
-fn is_typing_in_game() -> bool {
-    match lmagent::agent_client::send_line("{\"action\":\"istyping\"}") {
-        Ok(resp) => {
-            let typing = resp.contains("\"ok\":true") && resp.contains("\"true\"");
-            hlog::info(&format!("istyping -> {}", typing));
-            typing
-        }
-        Err(e) => {
-            // Agent absent: assume not typing so actions still work.
-            hlog::warn(&format!("istyping unavailable: {}", e));
-            false
-        }
     }
 }
 
@@ -280,9 +302,11 @@ fn current_exe_path_for_direct(_app: &tauri::AppHandle) -> String {
     format!("{}\\Game\\Lords Mobile PC.exe", base.trim_end_matches(['\\', '/']))
 }
 
-/// Execute a `direct:<spec>` action from any thread.
+/// Execute a `direct:<spec>` action from any thread. `spec` may be either a
+/// named id (formation_inf_phalanx, map3dview_full, switch_account_direct) or
+/// a parameterized one (formation:3, map3dview:2, zoom:0.5).
 fn execute_direct_spec(exe_path: &str, spec: &str) -> Result<String, String> {
-    let action = lmagent::action::resolve_hotkey_action(&format!("direct:{}", spec))
+    let action = lmagent::action::resolve_named_or_spec(spec)
         .ok_or_else(|| format!("unknown direct action {}", spec))?;
     lmagent::execute(exe_path, &action)
 }
@@ -822,12 +846,6 @@ pub fn run() {
                         let action = crate::hotkeys::action_for_shortcut_id(shortcut.id())
                             .or_else(|| crate::hotkeys::action_for_shortcut(&key));
                         if let Some(action) = action {
-                            // In-game text input guard: never fire hotkeys while
-                            // the player is typing (chat / mail / search).
-                            if action.starts_with("direct:") && is_typing_in_game() {
-                                hlog::info("ignored: game text input focused (typing)");
-                                return;
-                            }
                             hlog::info(&format!("hotkey {} (id {:x}) -> action {}", key, shortcut.id(), action));
                             if let Some(spec) = action.strip_prefix("direct:").map(String::from) {
                                 // Direct actions run fully in Rust — no webview
@@ -837,19 +855,26 @@ pub fn run() {
                                     "direct action {} with exe_path {:?}",
                                     spec, exe_path
                                 ));
+                                let app2 = app.clone();
                                 std::thread::spawn(move || {
                                     match execute_direct_spec(&exe_path, &spec) {
                                         Ok(detail) => {
-                                            hlog::info(&format!("direct {} ok: {}", spec, detail))
+                                            hlog::info(&format!("direct {} ok: {}", spec, detail));
+                                            toast(&app2, &format!("{}: {}", pretty_spec(&spec), detail));
                                         }
-                                        Err(e) => hlog::error(&format!("direct {} failed: {}", spec, e)),
+                                        Err(e) => {
+                                            hlog::error(&format!("direct {} failed: {}", spec, e));
+                                            toast(&app2, &format!("{} failed: {}", pretty_spec(&spec), e));
+                                        }
                                     }
                                 });
                             } else {
-                                let _ = app.emit("lmplus-hotkey", action);
+                                let _ = app.emit("lmplus-hotkey", action.clone());
+                                toast(app, &format!("Switching: {}", action));
                             }
                         } else {
                             hlog::warn(&format!("hotkey {} has no mapped action", key));
+                            toast(app, &format!("No action mapped to {}", key));
                         }
                     }
                 })

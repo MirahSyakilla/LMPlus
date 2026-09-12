@@ -137,6 +137,51 @@ function renderMainShell() {
 
 // --- State ---
 let basePath = "";
+const TOAST_CONTAINER_ID = "lmplus-toast-container";
+
+function ensureToastContainer(): HTMLElement {
+  let el = document.getElementById(TOAST_CONTAINER_ID);
+  if (!el) {
+    el = document.createElement("div");
+    el.id = TOAST_CONTAINER_ID;
+    el.style.cssText = [
+      "position:fixed", "top:12px", "right:12px", "z-index:99999",
+      "display:flex", "flex-direction:column", "gap:8px", "pointer-events:none",
+      "max-width:280px",
+    ].join(";");
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function showToast(message: string, kind: "info" | "error" = "info") {
+  const container = ensureToastContainer();
+  const toast = document.createElement("div");
+  toast.textContent = message;
+  const bg = kind === "error" ? "#b3261e" : "#323232";
+  toast.style.cssText = [
+    "background:" + bg, "color:#fff", "padding:8px 12px", "border-radius:8px",
+    "font-size:12px", "line-height:1.35", "box-shadow:0 2px 8px rgba(0,0,0,.4)",
+    "opacity:0", "transform:translateY(-6px)", "transition:opacity .15s, transform .15s",
+    "word-break:break-word",
+  ].join(";");
+  container.appendChild(toast);
+  requestAnimationFrame(() => {
+    toast.style.opacity = "1";
+    toast.style.transform = "translateY(0)";
+  });
+  window.setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(-6px)";
+    window.setTimeout(() => toast.remove(), 200);
+  }, 2200);
+}
+
+const TOGGLE_ACCOUNT_ROW = "Enable/Disable Account Hotkeys";
+const TOGGLE_FORMATION_ROW = "Enable/Disable Formation Hotkeys";
+const TOGGLE_ACCOUNT_ID = "toggle_account_hotkeys";
+const TOGGLE_FORMATION_ID = "toggle_formation_hotkeys";
+
 let exePath = "";
 let processName = "";
 let accountsPath = "";
@@ -904,6 +949,7 @@ async function executeHotkeyAction(action: string) {
   } else if (action.startsWith("misc_")) {
     await api.executeMacro(action.slice(5), exePath, processName);
   } else {
+    showToast(`Switching: ${action}`);
     await switchAccount(action);
   }
 }
@@ -954,6 +1000,10 @@ async function setupHotkeyEvents() {
   await listen<string>("lmplus-hotkey", async (event) => {
     await executeHotkeyAction(event.payload);
   });
+  await listen<string>("lmplus-toast", (event) => {
+    const msg = event.payload || "";
+    showToast(msg, msg.includes("failed") ? "error" : "info");
+  });
 }
 
 async function buildHotkeyRegistrationJson() {
@@ -972,9 +1022,13 @@ async function buildHotkeyRegistrationJson() {
     }
   }
 
-  const miscHotkeys = (await api.loadMiscCfg())
-    .filter((m) => !!m.hotkey)
-    .map((m) => ({ name: m.name, hotkey: m.hotkey }));
+  // Misc toggles are stored under direct.<id> like other direct actions.
+  const miscHotkeys: { name: string; hotkey: string }[] = [];
+  const allHotkeys2 = await api.getHotkeySettings();
+  for (const id of [TOGGLE_ACCOUNT_ID, TOGGLE_FORMATION_ID]) {
+    const hk = allHotkeys2[`direct.${id}`] as string | undefined;
+    if (hk) miscHotkeys.push({ name: id, hotkey: hk });
+  }
 
   return JSON.stringify({
     hotkeys,
@@ -1151,19 +1205,14 @@ async function showHotkeyDialog() {
   body.className = "hotkey-dialog-body";
   shell.appendChild(body);
 
-  if (currentHotkeyTab === 2) {
-    const warn = document.createElement("div");
-    warn.className = "hotkey-warning";
-    warn.textContent = "Set Lords Mobile to the lowest resolution before configuring macros!";
-    body.appendChild(warn);
-  }
+
 
   const tableWrap = document.createElement("div");
   tableWrap.className = "hotkey-table-wrap";
   const table = document.createElement("table");
   table.className = "hotkey-table";
   table.innerHTML =
-    `<thead><tr><th>${currentHotkeyTab === 1 ? "Formation" : currentHotkeyTab === 2 ? "Name" : "Account"}</th><th>Hotkey</th></tr></thead><tbody></tbody>`;
+    `<thead><tr><th>${currentHotkeyTab === 1 ? "Formation" : currentHotkeyTab === 2 ? "Enable/Disable Hotkey" : "Account"}</th><th>Hotkey</th></tr></thead><tbody></tbody>`;
   tableWrap.appendChild(table);
   body.appendChild(tableWrap);
   const tbody = table.querySelector("tbody")!;
@@ -1194,10 +1243,11 @@ async function showHotkeyDialog() {
         rows.push({ name: f, hotkey: (hotkeys[`direct.${directNames[f]}`] as string) || "" });
       }
     } else {
-      const macros = await api.loadMiscCfg();
-      for (const m of macros) {
-        rows.push({ name: m.name, hotkey: m.hotkey || "" });
-      }
+      // Misc = hotkey-enabled toggles. These are always recognized (no focus
+      // gate applies to them being REGISTERED; they toggle the other groups).
+      const hotkeys = await api.getHotkeySettings();
+      rows.push({ name: TOGGLE_ACCOUNT_ROW, hotkey: (hotkeys[`direct.${TOGGLE_ACCOUNT_ID}`] as string) || "" });
+      rows.push({ name: TOGGLE_FORMATION_ROW, hotkey: (hotkeys[`direct.${TOGGLE_FORMATION_ID}`] as string) || "" });
     }
   } catch (e) {
     tbody.replaceChildren();
@@ -1225,23 +1275,10 @@ async function showHotkeyDialog() {
       tr.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         const items = [{ label: "Reset Hotkey", action: () => resetHotkey(row) }];
-        if (currentHotkeyTab === 2) {
-          items.push({ label: "Delete Macro", action: () => deleteMacro(row) });
-        }
         showContextMenu(e.clientX, e.clientY, items);
       });
       tbody.appendChild(tr);
     });
-    if (currentHotkeyTab === 2) {
-      const addTr = document.createElement("tr");
-      const addCell = document.createElement("td");
-      addCell.colSpan = 2;
-      addCell.className = "hotkey-add-row";
-      addCell.textContent = "+ Add Macro";
-      addTr.appendChild(addCell);
-      addTr.addEventListener("click", () => addMacro());
-      tbody.appendChild(addTr);
-    }
   };
 
   const resetHotkey = async (row: HotkeyRow) => {
@@ -1251,48 +1288,14 @@ async function showHotkeyDialog() {
       } else if (currentHotkeyTab === 1) {
         await api.removeHotkey("direct", FORMATION_ROW_TO_DIRECT[row.name]?.slice("direct:".length) || row.name);
       } else {
-        row.hotkey = "";
-        const macros = await api.loadMiscCfg();
-        const updated = macros.map((m) => (m.name === row.name ? { ...m, hotkey: "" } : m));
-        await api.saveMiscCfg(updated);
+        const id = row.name === TOGGLE_ACCOUNT_ROW ? TOGGLE_ACCOUNT_ID : TOGGLE_FORMATION_ID;
+        await api.removeHotkey("direct", id);
       }
       row.hotkey = "";
       renderRows();
       await reregisterHotkeys();
     } catch (e) {
       await showMessageDialog("Hotkeys", `Failed to reset hotkey:\n${e}`);
-    }
-  };
-
-  const addMacro = async () => {
-    const name = await showInputDialog("Add Macro", "Enter macro name:");
-    if (!name || !name.trim()) return;
-    try {
-      const macros = await api.loadMiscCfg();
-      if (macros.some((m) => m.name === name.trim())) {
-        await showMessageDialog("Add Macro", "A macro with this name already exists.");
-        return;
-      }
-      macros.push({ name: name.trim(), hotkey: "", points: [] });
-      await api.saveMiscCfg(macros);
-      rows.push({ name: name.trim(), hotkey: "" });
-      renderRows();
-      await reregisterHotkeys();
-    } catch (e) {
-      await showMessageDialog("Add Macro", `Failed to add macro:\n${e}`);
-    }
-  };
-
-  const deleteMacro = async (row: HotkeyRow) => {
-    try {
-      const macros = await api.loadMiscCfg();
-      await api.saveMiscCfg(macros.filter((m) => m.name !== row.name));
-      const idx = rows.indexOf(row);
-      if (idx !== -1) rows.splice(idx, 1);
-      renderRows();
-      await reregisterHotkeys();
-    } catch (e) {
-      await showMessageDialog("Delete Macro", `Failed to delete macro:\n${e}`);
     }
   };
 
@@ -1306,7 +1309,8 @@ async function showHotkeyDialog() {
   };
   const actionForRow = (row: HotkeyRow, tab: number) => (
     tab === 1 ? (FORMATION_ROW_TO_DIRECT[row.name] || `swap_${row.name}`)
-      : tab === 2 ? `misc_${row.name}` : row.name
+      : tab === 2 ? `direct:${row.name === TOGGLE_ACCOUNT_ROW ? TOGGLE_ACCOUNT_ID : TOGGLE_FORMATION_ID}`
+      : row.name
   );
 
   const startRecording = (row: HotkeyRow, cell: HTMLElement) => {
@@ -1370,10 +1374,8 @@ async function showHotkeyDialog() {
             await api.setHotkey("hotkeys", row.name, hotkey);
           } else if (tabAtStart === 1) {
             await api.setHotkey("direct", FORMATION_ROW_TO_DIRECT[row.name]?.slice("direct:".length) || row.name, hotkey);
-          } else {
-            const macros = await api.loadMiscCfg();
-            const updated = macros.map((m) => (m.name === row.name ? { ...m, hotkey } : m));
-            await api.saveMiscCfg(updated);
+          } else if (tabAtStart === 2) {
+            await api.setHotkey("direct", row.name === TOGGLE_ACCOUNT_ROW ? TOGGLE_ACCOUNT_ID : TOGGLE_FORMATION_ID, hotkey);
           }
           await reregisterHotkeys();
         } catch (err) {

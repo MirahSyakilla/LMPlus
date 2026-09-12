@@ -62,30 +62,9 @@ impl std::io::Write for PipeStream {
 
 /// Send one JSON line to the agent, return its JSON response line.
 pub fn send_line(line: &str) -> Result<String, String> {
+    let handle = open_pipe(true)?;
     unsafe {
         let wide = to_wide(PIPE_NAME);
-        let mut handle = INVALID_HANDLE_VALUE;
-        // The single-instance server may be busy serving another client; retry.
-        for _ in 0..20 {
-            handle = CreateFileW(
-                wide.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                std::ptr::null_mut(),
-                OPEN_EXISTING,
-                0,
-                std::ptr::null_mut(),
-            );
-            if handle != INVALID_HANDLE_VALUE {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(
-                "agent pipe not available (agent not injected or game closed)".into(),
-            );
-        }
         let mut req = line.as_bytes().to_vec();
         req.push(b'\n');
         PipeStream(handle).write_all(&req).map_err(|e| e.to_string())?;
@@ -96,3 +75,49 @@ pub fn send_line(line: &str) -> Result<String, String> {
         Ok(resp.trim_end().to_string())
     }
 }
+
+/// Single-attempt send for fast probes (focus/typing guards).
+pub fn send_line_fast(line: &str) -> Result<String, String> {
+    let handle = open_pipe(false)?;
+    unsafe {
+        let mut req = line.as_bytes().to_vec();
+        req.push(b'\n');
+        PipeStream(handle).write_all(&req).map_err(|e| e.to_string())?;
+        let mut reader = BufReader::new(PipeStream(handle));
+        let mut resp = String::new();
+        reader.read_line(&mut resp).map_err(|e| e.to_string())?;
+        CloseHandle(handle);
+        Ok(resp.trim_end().to_string())
+    }
+}
+
+/// Open the agent pipe. retry=true waits up to 2s (for injection settle),
+/// retry=false is a single attempt (fast probes).
+fn open_pipe(retry: bool) -> Result<winapi::shared::ntdef::HANDLE, String> {
+    unsafe {
+        let wide = to_wide(PIPE_NAME);
+        let attempts = if retry { 20 } else { 1 };
+        let mut handle = INVALID_HANDLE_VALUE;
+        for _ in 0..attempts {
+            handle = CreateFileW(
+                wide.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            );
+            if handle != INVALID_HANDLE_VALUE {
+                return Ok(handle);
+            }
+            if retry {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        Err(
+            "agent pipe not available (agent not injected or game closed)".into(),
+        )
+    }
+}
+

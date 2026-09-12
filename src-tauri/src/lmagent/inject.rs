@@ -218,6 +218,14 @@ pub fn agent_alive() -> bool {
     )
 }
 
+/// Single-attempt ping — no 2s retry stall. For focus/typing guards.
+pub fn agent_alive_fast() -> bool {
+    matches!(
+        super::agent_client::send_line_fast("{\"action\":\"ping\"}"),
+        Ok(resp) if resp.contains("\"ok\":true")
+    )
+}
+
 /// Eject the agent DLL (uses FreeLibraryAndExitThread inside the target).
 pub fn eject(pid: DWORD) -> Result<(), String> {
     unsafe {

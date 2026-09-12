@@ -61,6 +61,32 @@ impl LMPlusAction {
     }
 }
 
+/// Named-id mapping used by the Formation hotkey tab (matches the frontend's
+/// DIRECT_ACTION_SPECS).
+pub const NAMED_ACTIONS: [(&str, LMPlusAction); 10] = [
+    ("formation_inf_phalanx", LMPlusAction::Formation { index: 0 }),
+    ("formation_range_phalanx", LMPlusAction::Formation { index: 1 }),
+    ("formation_cav_phalanx", LMPlusAction::Formation { index: 2 }),
+    ("formation_inf_wedge", LMPlusAction::Formation { index: 3 }),
+    ("formation_range_wedge", LMPlusAction::Formation { index: 4 }),
+    ("formation_cav_wedge", LMPlusAction::Formation { index: 5 }),
+    ("map3dview_full", LMPlusAction::Map3DView { mode: 0 }),
+    ("map3dview_balanced", LMPlusAction::Map3DView { mode: 1 }),
+    ("map3dview_none", LMPlusAction::Map3DView { mode: 2 }),
+    ("switch_account_direct", LMPlusAction::SwitchAccount),
+];
+
+/// Resolve either a named id (formation_inf_phalanx) or a parameterized spec
+/// (formation:3, map3dview:2, zoom:0.5).
+pub fn resolve_named_or_spec(spec: &str) -> Option<LMPlusAction> {
+    for (name, action) in &NAMED_ACTIONS {
+        if *name == spec {
+            return Some(action.clone());
+        }
+    }
+    resolve_hotkey_action(spec)
+}
+
 /// Hotkey action strings used by the frontend (`formation:3`, `map3dview:0`, …).
 pub fn resolve_hotkey_action(action: &str) -> Option<LMPlusAction> {
     let (kind, arg) = action.split_once(':')?;
