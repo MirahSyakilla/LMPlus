@@ -1,4 +1,0 @@
-    Checking lmp-agent v2.6.0 (/home/meow/LMPlus-Project/LMPlus-RS/agent)
-error: could not compile `lmp-agent` (lib test) due to 15 previous errors; 1 warning emitted
-warning: build failed, waiting for other jobs to finish...
-error: could not compile `lmp-agent` (lib) due to 15 previous errors; 1 warning emitted
