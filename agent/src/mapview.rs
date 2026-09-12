@@ -41,12 +41,10 @@ pub fn set_map_3d_view(mode: u8) -> Result<(), String> {
         return Err(format!("mode {} out of range 0..=2", mode));
     }
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    crate::unity_thread::enqueue(Box::new(move || {
-        tx.send(do_set_map_3d_view(mode)).ok();
-    }));
-    rx.recv_timeout(std::time::Duration::from_secs(5))
-        .map_err(|_| "map3dview action timed out on unity thread".to_string())?
+    crate::unity_thread::call_or_inline(
+        move || do_set_map_3d_view(mode),
+        std::time::Duration::from_secs(5),
+    )?
 }
 
 fn do_set_map_3d_view(mode: u8) -> Result<(), String> {
@@ -139,12 +137,10 @@ pub fn set_camera_dist(dist: f32) -> Result<(), String> {
         ));
     }
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    crate::unity_thread::enqueue(Box::new(move || {
-        tx.send(do_set_camera_dist(dist)).ok();
-    }));
-    rx.recv_timeout(std::time::Duration::from_secs(5))
-        .map_err(|_| "zoom action timed out on unity thread".to_string())?
+    crate::unity_thread::call_or_inline(
+        move || do_set_camera_dist(dist),
+        std::time::Duration::from_secs(5),
+    )?
 }
 
 fn do_set_camera_dist(dist: f32) -> Result<(), String> {

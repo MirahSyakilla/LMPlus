@@ -11,7 +11,7 @@ use winapi::um::namedpipeapi::CreateNamedPipeW;
 use winapi::um::namedpipeapi::ConnectNamedPipe;
 use winapi::um::winbase::{
     FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
-    PIPE_WAIT,
+    PIPE_WAIT, FILE_FLAG_WRITE_THROUGH,
 };
 use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::winnt::{FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE};
@@ -32,7 +32,7 @@ pub fn ipc_server_main(handler: RequestHandler, shutdown: &AtomicBool) {
         }
         unsafe {
             let wide = to_wide(PIPE_NAME);
-            let pipe = CreateNamedPipeW(
+            let mut pipe = CreateNamedPipeW(
                 wide.as_ptr(),
                 PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
@@ -43,9 +43,22 @@ pub fn ipc_server_main(handler: RequestHandler, shutdown: &AtomicBool) {
                 std::ptr::null_mut(),
             );
             if pipe == INVALID_HANDLE_VALUE {
-                // Pipe already exists (agent restarted inside a game instance
-                // that already has one) — idle and retry later.
-                std::thread::sleep(std::time::Duration::from_secs(5));
+                // Instance already exists (e.g. LMPlus probed us) — create a
+                // second server instance on the same pipe name instead of
+                // dying: the pipe listener must survive.
+                pipe = CreateNamedPipeW(
+                    wide.as_ptr(),
+                    PIPE_ACCESS_DUPLEX,
+                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                    4,
+                    4096,
+                    4096,
+                    0,
+                    std::ptr::null_mut(),
+                );
+            }
+            if pipe == INVALID_HANDLE_VALUE {
+                std::thread::sleep(std::time::Duration::from_secs(1));
                 continue;
             }
             let connected = ConnectNamedPipe(pipe, std::ptr::null_mut()) != 0;

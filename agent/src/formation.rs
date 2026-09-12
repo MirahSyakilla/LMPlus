@@ -38,14 +38,12 @@ pub fn set_formation(index: u8) -> Result<(), String> {
         ));
     }
 
-    // Marshal to Unity main thread; MessagePacket.Send touches the socket state.
-    let (tx, rx) = std::sync::mpsc::channel();
-    let idx = index;
-    crate::unity_thread::enqueue(Box::new(move || {
-        tx.send(do_set_formation(idx)).ok();
-    }));
-    rx.recv_timeout(std::time::Duration::from_secs(5))
-        .map_err(|_| "formation action timed out on unity thread".to_string())?
+    // Marshal to Unity main thread when the hook is up; MessagePacket.Send
+    // touches the socket state.
+    crate::unity_thread::call_or_inline(
+        move || do_set_formation(index),
+        std::time::Duration::from_secs(5),
+    )?
 }
 
 fn do_set_formation(index: u8) -> Result<(), String> {
@@ -202,12 +200,10 @@ pub fn switch_account_restart() -> Result<(), String> {
     // Human-like latency before the switch (server-side detection watches for
     // machine-speed switching; a deliberate pause keeps us under that pattern).
     std::thread::sleep(std::time::Duration::from_millis(SWITCH_LATENCY_MS));
-    let (tx, rx) = std::sync::mpsc::channel();
-    crate::unity_thread::enqueue(Box::new(move || {
-        tx.send(do_switch_account()).ok();
-    }));
-    rx.recv_timeout(std::time::Duration::from_secs(10))
-        .map_err(|_| "switch_account timed out on unity thread".to_string())?
+    crate::unity_thread::call_or_inline(
+        do_switch_account,
+        std::time::Duration::from_secs(10),
+    )?
 }
 
 fn do_switch_account() -> Result<(), String> {

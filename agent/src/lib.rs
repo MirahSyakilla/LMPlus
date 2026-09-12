@@ -29,6 +29,7 @@ mod il2cpp;
 mod unity_thread;
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static UNITY_READY: AtomicBool = AtomicBool::new(false);
 // il2cpp_* symbols are provided by the host process (GameAssembly.dll) and are
 // resolved at load time through native/libgameassembly.a (generated from the
 // game's export table).
@@ -43,11 +44,11 @@ extern "system" fn DllMain(_hinst: *mut core::ffi::c_void, reason: u32, _reserve
     const DLL_PROCESS_DETACH: u32 = 0;
     match reason {
         DLL_PROCESS_ATTACH => {
-            // Start IPC on a background thread; game work is marshalled to the
-            // Unity main thread by unity_thread::pump via a player-loop hook.
+            // Start the IPC server immediately so the host can verify injection
+            // with a ping right away. il2cpp readiness + main-thread hook are
+            // established lazily on the first real action (see handle_request),
+            // and each action also retries the hook install.
             std::thread::spawn(|| {
-                unsafe { il2cpp::wait_for_il2cpp_ready(60_000) };
-                unity_thread::install();
                 ipc_server_main(handle_request, &SHUTDOWN);
             });
             1
@@ -62,6 +63,15 @@ extern "system" fn DllMain(_hinst: *mut core::ffi::c_void, reason: u32, _reserve
 
 #[cfg(windows)]
 fn handle_request(req: ActionRequest) -> ActionResponse {
+    // Lazily bring up il2cpp + the main-thread pump on first contact.
+    if !matches!(req, ActionRequest::Ping) {
+        if !UNITY_READY.load(Ordering::SeqCst) {
+            unsafe { il2cpp::wait_for_il2cpp_ready(20_000) };
+            if unity_thread::install() {
+                UNITY_READY.store(true, Ordering::SeqCst);
+            }
+        }
+    }
     match req {
         ActionRequest::Ping => ActionResponse::Ok("pong".into()),
         ActionRequest::Formation { index } => match formation::set_formation(index) {

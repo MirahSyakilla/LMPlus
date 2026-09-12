@@ -64,17 +64,27 @@ impl std::io::Write for PipeStream {
 pub fn send_line(line: &str) -> Result<String, String> {
     unsafe {
         let wide = to_wide(PIPE_NAME);
-        let handle = CreateFileW(
-            wide.as_ptr(),
-            GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            std::ptr::null_mut(),
-            OPEN_EXISTING,
-            0,
-            std::ptr::null_mut(),
-        );
+        let mut handle = INVALID_HANDLE_VALUE;
+        // The single-instance server may be busy serving another client; retry.
+        for _ in 0..20 {
+            handle = CreateFileW(
+                wide.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            );
+            if handle != INVALID_HANDLE_VALUE {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         if handle == INVALID_HANDLE_VALUE {
-            return Err("agent pipe not available (is the agent injected?)".into());
+            return Err(
+                "agent pipe not available (agent not injected or game closed)".into(),
+            );
         }
         let mut req = line.as_bytes().to_vec();
         req.push(b'\n');

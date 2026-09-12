@@ -118,3 +118,23 @@ pub fn drain() {
         }
     }
 }
+
+/// Enqueue a job and wait for it. Falls back to running inline when the
+/// main-thread hook is not installed (e.g. game window not found yet).
+pub fn call_or_inline<F, T>(job: F, timeout: std::time::Duration) -> Result<T, String>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    if HOOK_HANDLE.load(Ordering::SeqCst) == 0 {
+        // No pump available; run inline on this thread (caller must have
+        // attached the thread to il2cpp).
+        return Ok(job());
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    enqueue(Box::new(move || {
+        tx.send(job()).ok();
+    }));
+    rx.recv_timeout(timeout)
+        .map_err(|_| "action timed out on unity thread".to_string())
+}
