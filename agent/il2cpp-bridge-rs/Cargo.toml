@@ -1,0 +1,42 @@
+[package]
+name = "il2cpp-bridge-rs"
+version = "0.1.4"
+edition = "2021"
+description = "Rust library for Unity IL2CPP runtime introspection — resolve classes, invoke methods, and interact with the IL2CPP VM at runtime"
+license = "MIT"
+repository = "https://github.com/Batchhh/il2cpp-bridge-rs"
+keywords = ["il2cpp", "unity", "gamedev", "game-modding", "reverse-engineering"]
+categories = ["external-ffi-bindings", "game-engines"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+once_cell = "1"
+dashmap = "6"
+rustc-hash = "2"
+zip = "8.2.0"
+glam = "0.32.1"
+thiserror = "2"
+log = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+mach2 = "0.6.0"
+oslog = "0.2"
+
+[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_LibraryLoader"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "debuginfo"
+overflow-checks = false
