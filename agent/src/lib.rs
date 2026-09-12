@@ -63,10 +63,9 @@ extern "system" fn DllMain(_hinst: *mut core::ffi::c_void, reason: u32, _reserve
 
 #[cfg(windows)]
 fn handle_request(req: ActionRequest) -> ActionResponse {
-    // Lazily bring up il2cpp + the main-thread pump on first contact.
+    // Lazily bring up the bridge + the main-thread pump on first contact.
     if !matches!(req, ActionRequest::Ping) {
         if !UNITY_READY.load(Ordering::SeqCst) {
-            unsafe { il2cpp::wait_for_il2cpp_ready(20_000) };
             if unity_thread::install() {
                 UNITY_READY.store(true, Ordering::SeqCst);
             }

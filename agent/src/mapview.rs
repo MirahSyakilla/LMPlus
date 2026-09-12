@@ -1,26 +1,20 @@
-//! Kingdom Map 3D View (Full/Balanced/None) + Map Zoom slider.
+//! Kingdom Map 3D View (Full/Balanced/None) + Map Zoom slider — bridge edition.
 //!
-//! RE-verified call chain (Aug-2026 IL2CPP dump, field offsets platform-independent):
-//!   HeroStage_Suggestion.get_door()          (static)  → live Door
-//!   Door.TileMapController                   (Door+0xE60) → live MapTile
-//!   MapTile.mapTile3D                        (MapTile+0x1F0) → live MapTile3D
-//!   (world-map variant: WorldMap.mapTile3D   at +0x188)
+//! RE-verified chain (Aug-2026 IL2CPP dump; field offsets platform-independent):
+//!   HeroStage_Suggestion.get_door()   (static)  → live Door
+//!   Door.TileMapController            (+0xE60)  → live MapTile
+//!   MapTile.mapTile3D                 (+0x1F0)  → live MapTile3D
 //!
-//! 3D View modes: MapTile3D.set_FovLevel(byte) — 0=Full, 1=Balanced, 2=None.
-//!   set_FovLevel updates both the instance _CameraFovLevel (0x2A8) and the
-//!   global static; RefreshCamera/RefreshOrthoSize consume the instance value.
-//!   Persistence: DataManager.get_Instance → SetShowMapType(byte) →
-//!   SysSetting.mShowMapType (saved server-side/on disk by the game).
+//! 3D View: MapTile3D.set_FovLevel(byte) — 0=Full, 1=Balanced, 2=None
+//!   (updates instance _CameraFovLevel 0x2A8 consumed by RefreshOrthoSize),
+//!   plus DataManager.get_Instance → SetShowMapType(byte) for persistence.
 //!
-//! Zoom: orthographic camera. set_CameraDist(f32) at MapTile3D is self-contained:
-//!   writes _CameraDist (0x2A4), calls ReScaleByDist + StopScroll, then
-//!   RefreshCamera internally. orthoSize = lerp(MapOrthoSizeNear,
-//!   MapOrthoSizeFar, clamp01((dist − MapNearPlane)/(MapFarPlane − MapNearPlane)))
-//! Valid dist range: MapNearPlane 2.1 (zoom-in) … MapFarPlane 5.2 (zoom-out),
-//! default 4.2 (MapDefaultPlane). No clamping inside set_CameraDist — we clamp.
-//! Do NOT call RefreshCamera separately; set_CameraDist already does.
+//! Zoom: orthographic camera; set_CameraDist(f32) is self-contained
+//!   (ReScaleByDist + StopScroll + RefreshCamera internally, no clamp —
+//!   we clamp). Valid range: 2.1 (near) … 5.2 (far), default 4.2.
 
-use crate::il2cpp::{self, boxed};
+use crate::il2cpp;
+use crate::unity_thread;
 
 /// Kingdom Map 3D View modes, in UI order.
 pub const MODE_NAMES: [&str; 3] = ["Full", "Balanced", "None"];
@@ -29,100 +23,107 @@ pub const MODE_NAMES: [&str; 3] = ["Full", "Balanced", "None"];
 pub const CAM_DIST_NEAR: f32 = 2.1;
 pub const CAM_DIST_FAR: f32 = 5.2;
 
-/// Offset of MapTile.mapTile3D (verified in dump.cs:75620).
 const MAPTILE_MAPTILE3D_OFFSET: usize = 0x1F0;
-/// Offset of WorldMap.mapTile3D (dump.cs ~90235).
-const WORLDMAP_MAPTILE3D_OFFSET: usize = 0x188;
-/// Offset of Door.TileMapController (dump.cs:155854).
 const DOOR_TILEMAPCONTROLLER_OFFSET: usize = 0xE60;
 
 pub fn set_map_3d_view(mode: u8) -> Result<(), String> {
     if mode as usize >= MODE_NAMES.len() {
         return Err(format!("mode {} out of range 0..=2", mode));
     }
-
-    crate::unity_thread::call_or_inline(
+    unity_thread::call_or_inline(
         move || do_set_map_3d_view(mode),
         std::time::Duration::from_secs(5),
     )?
 }
 
 fn do_set_map_3d_view(mode: u8) -> Result<(), String> {
-    if !il2cpp::attach_thread() {
-        return Err("failed to attach il2cpp thread".into());
-    }
+    il2cpp::ensure_bridge()?;
 
-    // 1. Persist via DataManager.SetShowMapType(byte) on the singleton.
-    let get_dm = il2cpp::find_method("DataManager", "get_Instance", 0)
+    let asm = il2cpp::bridge_csharp();
+
+    // 1. Persist: DataManager.Instance.SetShowMapType(mode).
+    let dm_class = asm
+        .class("DataManager")
+        .ok_or("DataManager class not found")?;
+    let get_dm = dm_class
+        .method("get_Instance")
         .ok_or("DataManager.get_Instance not found")?;
-    let set_type = il2cpp::find_method("DataManager", "SetShowMapType", 1)
+    let mut set_type = dm_class
+        .method(("SetShowMapType", 1))
         .ok_or("DataManager.SetShowMapType not found")?;
 
+    let dm_ptr: *mut std::ffi::c_void = unsafe { get_dm.call(&[])? };
+    if dm_ptr.is_null() {
+        return Err("DataManager instance is null".into());
+    }
+    set_type.instance = Some(dm_ptr);
     unsafe {
-        let dm = il2cpp::invoke(get_dm, std::ptr::null_mut(), std::ptr::null_mut())
-            .map_err(|e| format!("DataManager.get_Instance: {}", e))?;
-        let arg = boxed::u8_box(mode);
-        let mut args: [*mut core::ffi::c_void; 1] = [arg];
-        il2cpp::invoke(set_type, dm, args.as_mut_ptr())
+        set_type
+            .call::<()>(&[&mode as *const u8 as *mut std::ffi::c_void])
             .map_err(|e| format!("SetShowMapType: {}", e))?;
     }
 
-    // 2. Apply to the live map: MapTile3D.set_FovLevel(byte) — consumes the
-    //    instance _CameraFovLevel used by RefreshOrthoSize/GetLvScale.
-    match unsafe { find_maptile3d_instance() } {
-        Ok(instance) => unsafe {
-            let setter = il2cpp::find_method("MapTile3D", "set_FovLevel", 1)
-                .ok_or("MapTile3D.set_FovLevel not found")?;
-            let arg = boxed::u8_box(mode);
-            let mut args: [*mut core::ffi::c_void; 1] = [arg];
-            il2cpp::invoke(setter, instance, args.as_mut_ptr())
+    // 2. Apply live: MapTile3D.set_FovLevel(mode) — skip silently when
+    //    off-map; the persisted value applies on next map load (native parity).
+    if let Ok(map3d) = find_maptile3d(&asm) {
+        let setter = map3d
+            .method(("set_FovLevel", 1))
+            .ok_or("MapTile3D.set_FovLevel not found")?;
+        unsafe {
+            setter
+                .call::<()>(&[&mode as *const u8 as *mut std::ffi::c_void])
                 .map_err(|e| format!("set_FovLevel: {}", e))?;
-        },
-        Err(_) => {
-            // Off-map: persistence above is enough — the game applies the
-            // saved mShowMapType when the map next loads (native behavior).
         }
     }
 
     Ok(())
 }
 
-/// Resolve the live MapTile3D: HeroStage_Suggestion.get_door() →
-/// Door.TileMapController (+0xE60) → MapTile.mapTile3D (+0x1F0),
-/// falling back to the WorldMap variant (+0x188) for world/kingdom view.
-unsafe fn find_maptile3d_instance() -> Result<*mut core::ffi::c_void, String> {
-    let get_door = il2cpp::find_method("HeroStage_Suggestion", "get_door", 0)
+/// Resolve the live MapTile3D via the Door chain (bridge-wrapped raw reads).
+fn find_maptile3d(
+    asm: &std::sync::Arc<il2cpp_bridge_rs::structs::Assembly>,
+) -> Result<il2cpp_bridge_rs::structs::Object, String> {
+    let hs_class = asm
+        .class("HeroStage_Suggestion")
+        .ok_or("HeroStage_Suggestion class not found")?;
+    let get_door = hs_class
+        .method("get_door")
         .ok_or("HeroStage_Suggestion.get_door not found")?;
-    let door = il2cpp::invoke(get_door, std::ptr::null_mut(), std::ptr::null_mut())
-        .map_err(|e| format!("get_door: {}", e))?;
-    if door.is_null() {
+
+    let door_ptr: *mut std::ffi::c_void = unsafe { get_door.call(&[])? };
+    if door_ptr.is_null() {
         return Err("game Door not ready (log in first)".into());
     }
+    let door = unsafe { il2cpp_bridge_rs::structs::Object::from_ptr(door_ptr) };
 
-    // Door.TileMapController (MapTile) at +0xE60.
-    let tile = ((door as *mut u8).add(DOOR_TILEMAPCONTROLLER_OFFSET)
-        as *mut *mut core::ffi::c_void)
-        .read();
-    if !tile.is_null() {
-        let map3d = ((tile as *mut u8).add(MAPTILE_MAPTILE3D_OFFSET)
-            as *mut *mut core::ffi::c_void)
-            .read();
-        if !map3d.is_null() {
-            return Ok(map3d);
-        }
+    // Door.TileMapController (+0xE60) — raw pointer read of a reference field.
+    let tile_ptr = unsafe {
+        (door.as_ptr() as *mut u8)
+            .add(DOOR_TILEMAPCONTROLLER_OFFSET)
+            .cast::<*mut std::ffi::c_void>()
+            .read()
+    };
+    if tile_ptr.is_null() {
+        return Err("no live MapTile (is the kingdom map visible?)".into());
     }
 
-    // WorldMap fallback: static instance via UnityEngine FindObjectOfType-style
-    // lookup is overkill; instead probe the WorldMap chain through the same
-    // Door's world map reference if present.
-    // (kept simple: report not-ready rather than guessing addresses)
-    Err("no live MapTile3D (is the kingdom map visible?)".into())
+    // MapTile.mapTile3D (+0x1F0).
+    let map3d_ptr = unsafe {
+        (tile_ptr as *mut u8)
+            .add(MAPTILE_MAPTILE3D_OFFSET)
+            .cast::<*mut std::ffi::c_void>()
+            .read()
+    };
+    if map3d_ptr.is_null() {
+        return Err("no live MapTile3D (is the kingdom map visible?)".into());
+    }
+    Ok(unsafe { il2cpp_bridge_rs::structs::Object::from_ptr(map3d_ptr) })
 }
 
 /// Arbitrary map zoom. `level` in 0.0..=1.0 maps linearly:
 ///   0.0 → zoomed out (CAM_DIST_FAR 5.2), 1.0 → zoomed in (CAM_DIST_NEAR 2.1).
 pub fn set_camera_dist_level(level: f32) -> Result<(), String> {
-    if !(0.0..=1.0).contains(&level) {
+    if !(0.0..=1.0).contains(&level) || !level.is_finite() {
         return Err("zoom level out of range 0.0..=1.0".into());
     }
     let dist = CAM_DIST_FAR - (CAM_DIST_FAR - CAM_DIST_NEAR) * level;
@@ -136,27 +137,25 @@ pub fn set_camera_dist(dist: f32) -> Result<(), String> {
             dist, CAM_DIST_NEAR, CAM_DIST_FAR
         ));
     }
-
-    crate::unity_thread::call_or_inline(
+    unity_thread::call_or_inline(
         move || do_set_camera_dist(dist),
         std::time::Duration::from_secs(5),
     )?
 }
 
 fn do_set_camera_dist(dist: f32) -> Result<(), String> {
-    if !il2cpp::attach_thread() {
-        return Err("failed to attach il2cpp thread".into());
-    }
+    il2cpp::ensure_bridge()?;
+    let asm = il2cpp::bridge_csharp();
+    let map3d = find_maptile3d(&asm)?;
+
+    let setter = map3d
+        .method(("set_CameraDist", 1))
+        .ok_or("MapTile3D.set_CameraDist not found")?;
     unsafe {
-        let instance = unsafe { find_maptile3d_instance() }?;
-        let setter = il2cpp::find_method("MapTile3D", "set_CameraDist", 1)
-            .ok_or("MapTile3D.set_CameraDist not found")?;
-        let arg = boxed::f32_box(dist);
-        let mut args: [*mut core::ffi::c_void; 1] = [arg];
-        il2cpp::invoke(setter, instance, args.as_mut_ptr())
+        setter
+            .call::<()>(&[&dist as *const f32 as *mut std::ffi::c_void])
             .map_err(|e| format!("set_CameraDist: {}", e))?;
-        // No RefreshCamera call: set_CameraDist already runs
-        // ReScaleByDist + StopScroll + RefreshCamera internally (RE-verified).
     }
+    // No RefreshCamera call: set_CameraDist handles it internally (RE-verified).
     Ok(())
 }

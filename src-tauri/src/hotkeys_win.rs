@@ -69,33 +69,59 @@ fn collect_shortcuts(settings: &serde_json::Value) -> Vec<(String, String, Strin
 
 #[tauri::command]
 pub fn register_hotkeys(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     _accounts_path: String,
     settings_json: String,
 ) -> Result<serde_json::Value, String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
     let settings: serde_json::Value =
         serde_json::from_str(&settings_json).map_err(|e| format!("JSON parse: {}", e))?;
 
     let shortcuts = collect_shortcuts(&settings);
     let mut actions = HOTKEY_ACTIONS.lock().map_err(|e| e.to_string())?;
     actions.clear();
+
+    // Re-register every shortcut as a GLOBAL OS hotkey so they fire while the
+    // game (or anything else) has focus, not just when LMPlus is focused.
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
     let mut registered = Vec::new();
 
     for (hotkey, action, kind) in shortcuts {
-        actions.insert(normalize_shortcut(&hotkey), action.clone());
-        actions.insert(hotkey.clone(), action.clone());
-        registered.push(serde_json::json!({
-            "name": action.trim_start_matches("swap_").trim_start_matches("misc_"),
-            "type": kind,
-            "hotkey": hotkey,
-        }));
+        match gs.register(hotkey.as_str()) {
+            Ok(()) => {
+                actions.insert(normalize_shortcut(&hotkey), action.clone());
+                actions.insert(hotkey.clone(), action.clone());
+                registered.push(serde_json::json!({
+                    "name": action.trim_start_matches("swap_").trim_start_matches("misc_"),
+                    "type": kind,
+                    "hotkey": hotkey,
+                }));
+            }
+            Err(e) => {
+                // Keep the action mapped so the in-window fallback still works,
+                // but surface the failure.
+                actions.insert(normalize_shortcut(&hotkey), action.clone());
+                actions.insert(hotkey.clone(), action.clone());
+                registered.push(serde_json::json!({
+                    "name": action.trim_start_matches("swap_").trim_start_matches("misc_"),
+                    "type": kind,
+                    "hotkey": hotkey,
+                    "global": false,
+                    "error": e.to_string(),
+                }));
+            }
+        }
     }
 
     Ok(serde_json::json!(registered))
 }
 
 #[tauri::command]
-pub fn unregister_hotkeys(_app: tauri::AppHandle) -> Result<(), String> {
+pub fn unregister_hotkeys(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let _ = app.global_shortcut().unregister_all();
     HOTKEY_ACTIONS.lock().map_err(|e| e.to_string())?.clear();
     Ok(())
 }

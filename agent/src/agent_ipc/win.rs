@@ -11,7 +11,7 @@ use winapi::um::namedpipeapi::CreateNamedPipeW;
 use winapi::um::namedpipeapi::ConnectNamedPipe;
 use winapi::um::winbase::{
     FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
-    PIPE_WAIT, FILE_FLAG_WRITE_THROUGH,
+    PIPE_WAIT,
 };
 use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::winnt::{FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE};

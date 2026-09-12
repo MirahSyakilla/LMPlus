@@ -1,166 +1,74 @@
-//! il2cpp runtime FFI bindings + name-based resolver.
+//! il2cpp bridge layer — wraps il2cpp-bridge-rs (vendored) for the agent.
 //!
-//! All game interaction goes through the game's exported il2cpp_* API, so the
-//! agent survives game updates as long as class/method names stay stable
-//! (no hardcoded RVAs). RVAs from the Aug-2026 dump are only used as fallback
-//! documentation, never as addresses.
+//! Bridge handles symbol resolution (patched to look in GameAssembly.dll),
+//! thread attachment, class/method caching and invocation with exception
+//! handling. We orchestrate:
+//!   1. `ensure_bridge()` — run bridge init once, block until cache is ready
+//!   2. `with_class_method` — resolve + call helpers used by formation/mapview
 
-use std::ffi::CString;
+use il2cpp_bridge_rs::{api, init};
+use il2cpp_bridge_rs::structs::Method;
+use once_cell::sync::OnceCell;
+use std::ffi::c_void;
+use std::sync::mpsc;
+use std::time::Duration;
 
-pub type DomainPtr = *mut core::ffi::c_void;
-pub type ThreadPtr = *mut core::ffi::c_void;
-pub type AssemblyPtr = *mut core::ffi::c_void;
-pub type ImagePtr = *mut core::ffi::c_void;
-pub type ClassPtr = *mut core::ffi::c_void;
-pub type MethodPtr = *mut core::ffi::c_void;
-pub type ObjectPtr = *mut core::ffi::c_void;
-pub type VoidPtr = *mut core::ffi::c_void;
+static BRIDGE_READY: OnceCell<()> = OnceCell::new();
 
-extern "C" {
-    fn il2cpp_domain_get() -> DomainPtr;
-    fn il2cpp_thread_attach(domain: DomainPtr) -> ThreadPtr;
-    fn il2cpp_domain_get_assemblies(domain: DomainPtr, size: *mut usize) -> *mut AssemblyPtr;
-    fn il2cpp_assembly_get_image(assembly: AssemblyPtr) -> ImagePtr;
-    #[allow(dead_code)]
-    #[allow(dead_code)]
-    fn il2cpp_image_get_class_count(image: ImagePtr) -> usize;
-    #[allow(dead_code)]
-    fn il2cpp_image_get_class(image: ImagePtr, index: usize) -> ClassPtr;
-    fn il2cpp_class_from_name(image: ImagePtr, namespace: *const i8, name: *const i8) -> ClassPtr;
-    #[allow(dead_code)]
-    fn il2cpp_class_get_name(klass: ClassPtr) -> *const i8;
-    #[allow(dead_code)]
-    #[allow(dead_code)]
-    fn il2cpp_class_get_namespace(klass: ClassPtr) -> *const i8;
-    fn il2cpp_class_get_method_from_name(
-        klass: ClassPtr,
-        name: *const i8,
-        args: i32,
-    ) -> MethodPtr;
-    fn il2cpp_runtime_invoke(
-        method: MethodPtr,
-        obj: VoidPtr,
-        params: *mut *mut core::ffi::c_void,
-        exc: *mut *mut core::ffi::c_void,
-    ) -> ObjectPtr;
-    #[allow(dead_code)]
-    fn il2cpp_static_field_get_address(klass: ClassPtr) -> VoidPtr;
-}
-
-/// Handle to a resolved static method ready for runtime_invoke.
-#[derive(Clone, Copy)]
-pub struct Il2CppMethod(pub MethodPtr);
-
-/// Resolve a method by walking all assembly images looking for
-/// `class_name::method_name` with `arg_count` parameters.
-/// Mirrors the resolver used by generic IL2CPP injectors.
-pub fn find_method(class_name: &str, method_name: &str, arg_count: i32) -> Option<Il2CppMethod> {
-    unsafe {
-        let domain = il2cpp_domain_get();
-        if domain.is_null() {
-            return None;
-        }
-        let mut size: usize = 0;
-        let assemblies = il2cpp_domain_get_assemblies(domain, &mut size);
-        if assemblies.is_null() {
-            return None;
-        }
-        let cname = CString::new(class_name).ok()?;
-        let mname = CString::new(method_name).ok()?;
-        for i in 0..size {
-            let assembly = *assemblies.add(i);
-            if assembly.is_null() {
-                continue;
-            }
-            let image = il2cpp_assembly_get_image(assembly);
-            if image.is_null() {
-                continue;
-            }
-            // Fast path: known namespace-less game classes.
-            let klass = il2cpp_class_from_name(image, std::ptr::null(), cname.as_ptr());
-            if !klass.is_null() {
-                if let Some(m) = try_method(klass, &mname, arg_count) {
-                    return Some(m);
-                }
-            }
-        }
-        None
+/// Initialize the bridge exactly once and wait for the metadata cache.
+/// Safe to call from any thread; subsequent calls return immediately.
+pub fn ensure_bridge() -> Result<(), String> {
+    if BRIDGE_READY.get().is_some() {
+        return Ok(());
     }
-}
-
-unsafe fn try_method(klass: ClassPtr, mname: &CString, arg_count: i32) -> Option<Il2CppMethod> {
-    let m = il2cpp_class_get_method_from_name(klass, mname.as_ptr(), arg_count);
-    if m.is_null() {
-        None
-    } else {
-        Some(Il2CppMethod(m))
-    }
-}
-
-/// Safety-checked invoke wrapper.
-pub unsafe fn invoke(
-    method: Il2CppMethod,
-    obj: VoidPtr,
-    params: *mut *mut core::ffi::c_void,
-) -> Result<ObjectPtr, String> {
-    let mut exc: *mut core::ffi::c_void = std::ptr::null_mut();
-    let result = il2cpp_runtime_invoke(method.0, obj, params, &mut exc);
-    if !exc.is_null() {
-        return Err("il2cpp exception thrown during invoke".into());
-    }
-    Ok(result)
-}
-
-pub fn attach_thread() -> bool {
-    unsafe {
-        let domain = il2cpp_domain_get();
-        if domain.is_null() {
-            return false;
-        }
-        !il2cpp_thread_attach(domain).is_null()
-    }
-}
-
-/// Wait until the il2cpp domain is initialized (game finished booting).
-pub unsafe fn wait_for_il2cpp_ready(timeout_ms: u64) -> bool {
-    let start = std::time::Instant::now();
+    let (tx, rx) = mpsc::channel::<()>();
+    init("GameAssembly", move || {
+        tx.send(()).ok();
+    });
+    // A failed init resets bridge state and never calls the callback; retry
+    // init() periodically until the deadline.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut last_retry = std::time::Instant::now();
     loop {
-        let domain = il2cpp_domain_get();
-        if !domain.is_null() {
-            // Domain exists; also require at least one assembly to be loaded.
-            let mut size: usize = 0;
-            let asm = il2cpp_domain_get_assemblies(domain, &mut size);
-            if !asm.is_null() && size > 0 {
-                return true;
+        if rx.try_recv().is_ok() {
+            let _ = BRIDGE_READY.set(());
+            return Ok(());
+        }
+        if last_retry.elapsed() >= Duration::from_secs(5) {
+            last_retry = std::time::Instant::now();
+            let (tx2, rx2) = mpsc::channel::<()>();
+            init("GameAssembly", move || {
+                tx2.send(()).ok();
+            });
+            if rx2.try_recv().is_ok() {
+                let _ = BRIDGE_READY.set(());
+                return Ok(());
             }
         }
-        if start.elapsed().as_millis() as u64 > timeout_ms {
-            return false;
+        if std::time::Instant::now() > deadline {
+            return Err("il2cpp bridge initialization timed out".into());
         }
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
-/// Value-boxing helpers for runtime_invoke arguments.
-pub mod boxed {
-    pub fn u8_box(value: u8) -> *mut core::ffi::c_void {
-        let b = Box::new(value as u8);
-        Box::into_raw(b) as *mut _
-    }
-
-    pub fn f32_box(value: f32) -> *mut core::ffi::c_void {
-        let b = Box::new(value);
-        Box::into_raw(b) as *mut _
-    }
-
-    pub fn i32_box(value: i32) -> *mut core::ffi::c_void {
-        let b = Box::new(value);
-        Box::into_raw(b) as *mut _
-    }
+/// Access the hydrated Assembly-CSharp (game logic) cache.
+pub fn bridge_csharp() -> std::sync::Arc<il2cpp_bridge_rs::structs::Assembly> {
+    api::cache::csharp()
 }
 
-// Host-side (non-injected) resolution tests use these type aliases only.
+/// Resolve a static method by class + method name from the cached assemblies.
 #[allow(dead_code)]
-pub type Il2CppDomain = DomainPtr;
+pub fn find_method(class_name: &str, method_name: &str) -> Option<Method> {
+    let asm = api::cache::csharp();
+    let class = asm.class(class_name)?;
+    class.method(method_name)
+}
+
+/// Bind an instance pointer to a method for invocation.
 #[allow(dead_code)]
-pub type Il2CppImage = ImagePtr;
+pub fn bind_method(method: &Method, instance: *mut c_void) -> Method {
+    let mut m = method.clone();
+    m.instance = Some(instance);
+    m
+}

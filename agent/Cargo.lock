@@ -374,8 +374,6 @@ dependencies = [
 [[package]]
 name = "il2cpp-bridge-rs"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bda329aa6ea1dcf22189151bef993979825886859cea57ad987d64280b3f2ab1"
 dependencies = [
  "dashmap 6.2.1",
  "env_logger",
