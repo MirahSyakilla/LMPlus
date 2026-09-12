@@ -746,8 +746,10 @@ pub fn run() {
                     if event.state == ShortcutState::Pressed {
                         let key = shortcut.to_string();
                         hlog::info(&format!("global hotkey pressed: {}", key));
-                        if let Some(action) = crate::hotkeys::action_for_shortcut(&key) {
-                            hlog::info(&format!("hotkey {} -> action {}", key, action));
+                        let action = crate::hotkeys::action_for_shortcut_id(shortcut.id())
+                            .or_else(|| crate::hotkeys::action_for_shortcut(&key));
+                        if let Some(action) = action {
+                            hlog::info(&format!("hotkey {} (id {:x}) -> action {}", key, shortcut.id(), action));
                             if let Some(spec) = action.strip_prefix("direct:").map(String::from) {
                                 // Direct actions run fully in Rust — no webview
                                 // needed, so hotkeys work while the game has focus.

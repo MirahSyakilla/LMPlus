@@ -5,6 +5,14 @@ use std::sync::Mutex;
 static HOTKEY_ACTIONS: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Shortcut-id -> action, for the global-shortcut handler (no string compare).
+static HOTKEY_IDS: Lazy<Mutex<HashMap<u32, String>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub fn action_for_shortcut_id(id: u32) -> Option<String> {
+    HOTKEY_IDS.lock().ok()?.get(&id).cloned()
+}
+
 fn normalize_shortcut(shortcut: &str) -> String {
     shortcut
         .split('+')
@@ -80,7 +88,9 @@ pub fn register_hotkeys(
 
     let shortcuts = collect_shortcuts(&settings);
     let mut actions = HOTKEY_ACTIONS.lock().map_err(|e| e.to_string())?;
+    let mut ids = HOTKEY_IDS.lock().map_err(|e| e.to_string())?;
     actions.clear();
+    ids.clear();
 
     // Re-register every shortcut as a GLOBAL OS hotkey so they fire while the
     // game (or anything else) has focus, not just when LMPlus is focused.
@@ -93,6 +103,11 @@ pub fn register_hotkeys(
             Ok(()) => {
                 actions.insert(normalize_shortcut(&hotkey), action.clone());
                 actions.insert(hotkey.clone(), action.clone());
+                // Parse the same string the plugin parsed to get the identical
+                // shortcut id (hash of modifiers+key).
+                if let Ok(sc) = hotkey.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+                    ids.insert(sc.id(), action.clone());
+                }
                 registered.push(serde_json::json!({
                     "name": action.trim_start_matches("swap_").trim_start_matches("misc_"),
                     "type": kind,
