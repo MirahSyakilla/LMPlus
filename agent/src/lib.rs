@@ -26,7 +26,10 @@ mod formation;
 #[cfg(windows)]
 mod mapview;
 #[cfg(windows)]
-mod il2cpp;
+#[cfg(windows)]
+pub(crate) use raw as il2cpp_compat;
+#[cfg(windows)]
+pub(crate) mod raw;
 #[cfg(windows)]
 mod unity_thread;
 
@@ -51,21 +54,11 @@ extern "system" fn DllMain(_hinst: *mut core::ffi::c_void, reason: u32, _reserve
                 alog::info("agent thread up, starting pipe server");
                 ipc_server_main(handle_request, &SHUTDOWN);
             });
-            // Pre-warm worker: bridge init + cache hydration happen HERE on our
-            // own attached thread so real actions never freeze the game's main
-            // thread with a 319k-method hydration.
+            // Warmup worker: install the main-thread pump with retries (game
+            // window may not exist yet right after injection). Raw il2cpp
+            // calls need no metadata hydration.
             std::thread::spawn(|| {
-                alog::info("warmup: bridge init starting");
-                match il2cpp::ensure_bridge() {
-                    Ok(()) => alog::info("warmup: bridge ready"),
-                    Err(e) => {
-                        alog::error(&format!("warmup: bridge init failed: {}", e));
-                        return;
-                    }
-                }
-                // Install the main-thread pump with retries (game window may
-                // not exist yet right after injection).
-                for attempt in 1..=60 {
+                for _ in 0..60 {
                     if unity_thread::install() {
                         alog::info("warmup: unity hook installed");
                         UNITY_READY.store(true, Ordering::SeqCst);
@@ -112,10 +105,6 @@ fn run_action(req: ActionRequest) -> ActionResponse {
             alog::set_base_dir(&dir);
             ActionResponse::Ok("logdir set".into())
         }
-        ActionRequest::IsTyping => match crate::mapview::is_typing() {
-            Ok(t) => ActionResponse::Ok(if t { "true".into() } else { "false".into() }),
-            Err(e) => ActionResponse::Err(e),
-        },
         ActionRequest::Formation { index } => match formation::set_formation(index) {
             Ok(()) => ActionResponse::Ok(format!("formation {}", index)),
             Err(e) => ActionResponse::Err(e),

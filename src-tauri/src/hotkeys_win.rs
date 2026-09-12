@@ -14,6 +14,7 @@ pub fn is_direct_action(action: &str) -> bool {
     action.starts_with("formation_")
         || action.starts_with("map3dview_")
         || action.starts_with("zoom:")
+        || action.starts_with("toggle_")
         || action == "switch_account_direct"
 }
 

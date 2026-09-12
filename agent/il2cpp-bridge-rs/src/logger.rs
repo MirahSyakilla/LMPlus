@@ -29,17 +29,37 @@ fn ensure_initialized() {
     });
 }
 
-pub fn info(msg: &str) {
+static SINK: std::sync::Mutex<Option<Box<dyn Fn(&str, &str) + Send + Sync>>> =
+    std::sync::Mutex::new(None);
+
+/// Install a sink that receives (level, message) for every bridge log line.
+/// Used by embedders whose host has no stderr (e.g. injected into a GUI game).
+pub fn set_sink(f: Box<dyn Fn(&str, &str) + Send + Sync>) {
+    *SINK.lock().unwrap() = Some(f);
+}
+
+fn emit(level: &str, msg: &str) {
     ensure_initialized();
-    log::info!("{}", msg);
+    if let Ok(guard) = SINK.lock() {
+        if let Some(f) = guard.as_ref() {
+            f(level, msg);
+        }
+    }
+    match level {
+        "warn" => log::warn!("{}", msg),
+        "error" => log::error!("{}", msg),
+        _ => log::info!("{}", msg),
+    }
+}
+
+pub fn info(msg: &str) {
+    emit("info", msg);
 }
 
 pub fn warning(msg: &str) {
-    ensure_initialized();
-    log::warn!("{}", msg);
+    emit("warn", msg);
 }
 
 pub fn error(msg: &str) {
-    ensure_initialized();
-    log::error!("{}", msg);
+    emit("error", msg);
 }

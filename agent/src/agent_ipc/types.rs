@@ -2,7 +2,6 @@
 pub enum ActionRequest {
     Ping,
     LogDir(String),
-    IsTyping,
     Formation { index: u8 },
     Map3DView { mode: u8 },
     MapZoom { value: f32 },
@@ -73,7 +72,6 @@ pub fn parse_request(line: &str) -> Result<ActionRequest, String> {
     match v.get_str("action").ok_or("missing action")?.as_str() {
         "ping" => Ok(ActionRequest::Ping),
         "logdir" => Ok(ActionRequest::LogDir(v.get_str("dir").unwrap_or_default())),
-        "istyping" => Ok(ActionRequest::IsTyping),
         "formation" => {
             let index = v.get_num("index").ok_or("missing index")?;
             if index < 0.0 || index.floor() != index || index as usize >= FORMATION_COUNT {
