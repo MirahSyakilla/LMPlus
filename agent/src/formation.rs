@@ -45,13 +45,16 @@ pub fn set_formation(index: u8) -> Result<(), String> {
 }
 
 fn do_set_formation(index: u8) -> Result<(), String> {
+    crate::alog::info(&format!("formation: begin index={}", index));
     il2cpp::ensure_bridge()?;
+    crate::alog::info("formation: bridge ready");
 
     let asm = il2cpp::bridge_csharp();
 
     let mp_class = asm
         .class("MessagePacket")
         .ok_or("MessagePacket class not found")?;
+    crate::alog::info("formation: MessagePacket class found");
     let obj = mp_class.new_object().map_err(|e| format!("alloc MessagePacket: {}", e))?;
     if obj.ptr.is_null() {
         return Err("failed to allocate MessagePacket".into());
@@ -98,6 +101,7 @@ fn do_set_formation(index: u8) -> Result<(), String> {
             .call::<()>(&[&flag as *const bool as *mut c_void])
             .map_err(|e| format!("MessagePacket.Send: {}", e))?;
     }
+    crate::alog::info("formation: packet sent");
 
     Ok(())
 }

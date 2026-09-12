@@ -49,7 +49,7 @@ sign_args=(
   -certs "$cert_pem"
   -key "$key_pem"
   -n "LMPlus"
-  -i "https://lmp.nobullypls.site"
+  -i "https://lmp.unityssvc.store"
   -h sha256
   -in "$target"
   -out "$signed_target"
@@ -62,5 +62,22 @@ fi
 osslsigncode "${sign_args[@]}"
 mv -f "$signed_target" "$target"
 osslsigncode verify -CAfile "$cert_pem" -in "$target" >/dev/null
+
+# Sign the agent DLL too if it sits next to the installer inputs (same cert).
+agent_dll="$(dirname "$target")/../../resources/lmp_agent.dll"
+if [ -f "$agent_dll" ]; then
+  signed_agent="${agent_dll}.signed.$$"
+  osslsigncode sign \
+    -certs "$cert_pem" \
+    -key "$key_pem" \
+    -n "LMPlus" \
+    -i "https://lmp.unityssvc.store" \
+    -h sha256 \
+    -in "$agent_dll" \
+    -out "$signed_agent" >/dev/null
+  mv -f "$signed_agent" "$agent_dll"
+  osslsigncode verify -CAfile "$cert_pem" -in "$agent_dll" >/dev/null
+  echo "Authenticode self-signed: $agent_dll"
+fi
 
 echo "Authenticode self-signed: $target"

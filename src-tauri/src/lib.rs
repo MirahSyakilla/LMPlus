@@ -659,6 +659,21 @@ fn cmd_launch_game(
     process_name: String,
 ) -> Result<(), String> {
     state.require_license()?;
+    // Preferred: launch suspended with the agent preloaded (no AV-provoking
+    // remote thread into a running process, agent ready from frame zero).
+    #[cfg(windows)]
+    {
+        if let Ok(dll_path) = lmagent::agent_dll_path_pub() {
+            // The game launches with -PATH="<exe_path>" per the game's format.
+            let args = format!("-AD=0-0 -PATH=\"{}\"", exe_path);
+            match lmagent::inject::launch_game_with_agent(&exe_path, &args, &dll_path) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    crate::hlog::warn(&format!("pre-launch injection failed, falling back: {}", e));
+                }
+            }
+        }
+    }
     process::launch_game(exe_path, process_name)
 }
 

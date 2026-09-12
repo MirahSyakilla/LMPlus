@@ -72,6 +72,11 @@ fn parse_response(response: &str) -> Result<String, String> {
     }
 }
 
+/// Public wrapper for launch-time injection.
+pub fn agent_dll_path_pub() -> Result<String, String> {
+    agent_dll_path()
+}
+
 /// Locate lmp_agent.dll. Bundled installers place it at
 /// <exe_dir>/resources/lmp_agent.dll (tauri resources); dev builds may have it
 /// beside the exe.

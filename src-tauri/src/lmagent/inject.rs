@@ -317,3 +317,62 @@ fn remote_module_base(pid: DWORD, module_name: &str) -> Option<*mut core::ffi::c
         result
     }
 }
+
+/// Launch the game with the agent preloaded: CreateProcessW(CREATE_SUSPENDED)
+/// → inject → ResumeThread. AV-friendlier than remote-threading into a
+/// running process, and guarantees the agent is present from frame zero.
+pub fn launch_game_with_agent(
+    exe_path: &str,
+    args: &str,
+    dll_path: &str,
+) -> Result<(), String> {
+    use winapi::um::processthreadsapi::{CreateProcessW, ResumeThread, TerminateProcess};
+    use winapi::um::winbase::CREATE_SUSPENDED;
+    use winapi::um::processthreadsapi::STARTUPINFOW;
+
+    let wide_app = to_wide(exe_path);
+    let cmd = if args.is_empty() {
+        format!("\"{}\"", exe_path)
+    } else {
+        format!("\"{}\" {}", exe_path, args)
+    };
+    let mut cmd_wide = to_wide(&cmd);
+
+    unsafe {
+        let mut si: STARTUPINFOW = std::mem::zeroed();
+        si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        let mut pi: winapi::um::processthreadsapi::PROCESS_INFORMATION = std::mem::zeroed();
+
+        let ok = CreateProcessW(
+            wide_app.as_ptr(),
+            cmd_wide.as_mut_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            CREATE_SUSPENDED,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            &mut si,
+            &mut pi,
+        );
+        if ok == 0 {
+            return Err(format!(
+                "CreateProcessW(suspended) failed: {}",
+                winapi::um::errhandlingapi::GetLastError()
+            ));
+        }
+
+        // Inject while suspended.
+        if let Err(e) = inject(pi.dwProcessId, dll_path) {
+            TerminateProcess(pi.hProcess, 1);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            return Err(format!("pre-launch inject failed: {}", e));
+        }
+
+        ResumeThread(pi.hThread);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    Ok(())
+}

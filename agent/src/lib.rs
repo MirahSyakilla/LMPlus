@@ -46,12 +46,34 @@ extern "system" fn DllMain(_hinst: *mut core::ffi::c_void, reason: u32, _reserve
     const DLL_PROCESS_DETACH: u32 = 0;
     match reason {
         DLL_PROCESS_ATTACH => {
-            // Start the IPC server immediately so the host can verify injection
-            // with a ping right away. il2cpp readiness + main-thread hook are
-            // established lazily on the first real action (see handle_request).
+            // Start the IPC server immediately (ping works right away).
             std::thread::spawn(|| {
                 alog::info("agent thread up, starting pipe server");
                 ipc_server_main(handle_request, &SHUTDOWN);
+            });
+            // Pre-warm worker: bridge init + cache hydration happen HERE on our
+            // own attached thread so real actions never freeze the game's main
+            // thread with a 319k-method hydration.
+            std::thread::spawn(|| {
+                alog::info("warmup: bridge init starting");
+                match il2cpp::ensure_bridge() {
+                    Ok(()) => alog::info("warmup: bridge ready"),
+                    Err(e) => {
+                        alog::error(&format!("warmup: bridge init failed: {}", e));
+                        return;
+                    }
+                }
+                // Install the main-thread pump with retries (game window may
+                // not exist yet right after injection).
+                for attempt in 1..=60 {
+                    if unity_thread::install() {
+                        alog::info("warmup: unity hook installed");
+                        UNITY_READY.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                alog::error("warmup: unity hook never installed (no visible window)");
             });
             1
         }
@@ -64,17 +86,17 @@ extern "system" fn DllMain(_hinst: *mut core::ffi::c_void, reason: u32, _reserve
 }
 
 #[cfg(windows)]
-#[cfg(windows)]
 fn handle_request(req: ActionRequest) -> ActionResponse {
     alog::info(&format!("request: {:?}", req));
-    // Lazily bring up the bridge + the main-thread pump on first contact.
-    if !matches!(req, ActionRequest::Ping) {
-        if !UNITY_READY.load(Ordering::SeqCst) {
-            let installed = unity_thread::install();
-            alog::info(&format!("unity hook install: {}", installed));
-            if installed {
-                UNITY_READY.store(true, Ordering::SeqCst);
+    // Real actions wait for the warmup worker (bridge + hook), bounded.
+    if !matches!(req, ActionRequest::Ping | ActionRequest::LogDir(_)) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        while !UNITY_READY.load(Ordering::SeqCst) {
+            if std::time::Instant::now() > deadline {
+                alog::error("action aborted: warmup not finished in time");
+                return ActionResponse::Err("agent warming up (bridge/hook not ready); retry".into());
             }
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
     let response = run_action(req);

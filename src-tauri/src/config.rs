@@ -32,8 +32,8 @@ impl ReleaseChannel {
 
     pub fn backend_origin(self) -> &'static str {
         match self {
-            Self::Stable => "https://lmp.nobullypls.site",
-            Self::Beta => "https://staging.nobullypls.site",
+            Self::Stable => "https://lmp.unityssvc.store",
+            Self::Beta => "https://staging.unityssvc.store",
         }
     }
 }
