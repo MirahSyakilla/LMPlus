@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActionRequest {
     Ping,
+    LogDir(String),
     Formation { index: u8 },
     Map3DView { mode: u8 },
     MapZoom { value: f32 },
@@ -64,6 +65,7 @@ pub fn parse_request(line: &str) -> Result<ActionRequest, String> {
     let v: Value = serde_json_shim::parse(line)?;
     match v.get_str("action").ok_or("missing action")?.as_str() {
         "ping" => Ok(ActionRequest::Ping),
+        "logdir" => Ok(ActionRequest::LogDir(v.get_str("dir").unwrap_or_default())),
         "formation" => {
             let index = v.get_num("index").ok_or("missing index")?;
             if index < 0.0 || index.floor() != index || index as usize >= FORMATION_COUNT {
@@ -162,6 +164,14 @@ mod tests {
         assert!(parse_request("{\"action\":\"zoom\",\"level\":1.5}").is_err());
         assert!(parse_request("{\"action\":\"zoom\",\"level\":-0.1}").is_err());
         assert!(parse_request("{\"action\":\"zoom\",\"value\":12.5}").is_err()); // old key rejected
+    }
+
+    #[test]
+    fn parses_logdir() {
+        assert_eq!(
+            parse_request("{\"action\":\"logdir\",\"dir\":\"C:/LMPlus\"}").unwrap(),
+            ActionRequest::LogDir("C:/LMPlus".into())
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
 pub mod config;
 pub mod crypto;
+pub mod hlog;
 pub mod license;
 #[cfg(target_os = "windows")]
 pub mod lmagent;
@@ -194,6 +195,29 @@ fn is_terminal_license_failure(reason: &str) -> bool {
         || lower.contains("decryption")
         || lower.contains("utf-8")
         || lower.contains("data too short")
+}
+
+/// Base path for direct actions triggered from the global-shortcut handler.
+fn current_base_path() -> String {
+    config::get_settings()
+        .ok()
+        .and_then(|v| v.get("basePath").and_then(|b| b.as_str()).map(String::from))
+        .unwrap_or_default()
+}
+
+fn current_exe_path_for_direct(_app: &tauri::AppHandle) -> String {
+    let base = current_base_path();
+    if base.is_empty() {
+        return String::new();
+    }
+    format!("{}\\Game\\Lords Mobile PC.exe", base.trim_end_matches(['\\', '/']))
+}
+
+/// Execute a `direct:<spec>` action from any thread.
+fn execute_direct_spec(exe_path: &str, spec: &str) -> Result<String, String> {
+    let action = lmagent::action::resolve_hotkey_action(&format!("direct:{}", spec))
+        .ok_or_else(|| format!("unknown direct action {}", spec))?;
+    lmagent::execute(exe_path, &action)
 }
 
 fn build_paths(base_path: &str) -> serde_json::Value {
@@ -706,6 +730,7 @@ async fn cmd_perform_update(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    hlog::init();
     tauri::Builder::default()
         .manage(RuntimeState::default())
         .manage(TrayState::default())
@@ -720,8 +745,30 @@ pub fn run() {
 
                     if event.state == ShortcutState::Pressed {
                         let key = shortcut.to_string();
+                        hlog::info(&format!("global hotkey pressed: {}", key));
                         if let Some(action) = crate::hotkeys::action_for_shortcut(&key) {
-                            let _ = app.emit("lmplus-hotkey", action);
+                            hlog::info(&format!("hotkey {} -> action {}", key, action));
+                            if let Some(spec) = action.strip_prefix("direct:").map(String::from) {
+                                // Direct actions run fully in Rust — no webview
+                                // needed, so hotkeys work while the game has focus.
+                                let exe_path = current_exe_path_for_direct(app);
+                                hlog::info(&format!(
+                                    "direct action {} with exe_path {:?}",
+                                    spec, exe_path
+                                ));
+                                std::thread::spawn(move || {
+                                    match execute_direct_spec(&exe_path, &spec) {
+                                        Ok(detail) => {
+                                            hlog::info(&format!("direct {} ok: {}", spec, detail))
+                                        }
+                                        Err(e) => hlog::error(&format!("direct {} failed: {}", spec, e)),
+                                    }
+                                });
+                            } else {
+                                let _ = app.emit("lmplus-hotkey", action);
+                            }
+                        } else {
+                            hlog::warn(&format!("hotkey {} has no mapped action", key));
                         }
                     }
                 })

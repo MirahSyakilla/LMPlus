@@ -15,12 +15,42 @@ static ACTION_LOCK: Mutex<()> = Mutex::new(());
 pub fn execute(exe_path: &str, action: &LMPlusAction) -> Result<String, String> {
     let _guard = ACTION_LOCK.lock().map_err(|e| e.to_string())?;
 
+    crate::hlog::info(&format!("execute: {:?} exe_path={:?}", action, exe_path));
     let dll_path = agent_dll_path()?;
     inject::ensure_agent(exe_path, &dll_path)?;
+    tell_agent_log_dir(&dll_path);
 
     let response = agent_client::send_line(&action.to_wire())?;
-    parse_response(&response)
+    let result = parse_response(&response);
+    match &result {
+        Ok(d) => crate::hlog::info(&format!("agent ok: {}", d)),
+        Err(e) => crate::hlog::error(&format!("agent err: {}", e)),
+    }
+    result
 }
+
+/// Point the agent's logger at our logs dir (best-effort, once per session).
+fn tell_agent_log_dir(_dll_path: &str) {
+    // The agent derives its log dir from the pipe message; send a special
+    // ping carrying the LMPlus exe dir. Unknown actions are rejected, so use
+    // the dedicated "logdir" action the agent understands.
+    if AGENT_LOG_DIR_SENT.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let msg = format!(
+                "{{\"action\":\"logdir\",\"dir\":\"{}\"}}",
+                dir.to_string_lossy().replace('\\', "/")
+            );
+            if agent_client::send_line(&msg).is_ok() {
+                AGENT_LOG_DIR_SENT.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    }
+}
+
+static AGENT_LOG_DIR_SENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn parse_response(response: &str) -> Result<String, String> {
     if response.contains("\"ok\":true") {

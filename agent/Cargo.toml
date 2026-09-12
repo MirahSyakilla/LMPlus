@@ -9,7 +9,7 @@ crate-type = ["cdylib", "lib"]
 path = "src/lib.rs"
 
 [dependencies]
-winapi = { version = "0.3", features = ["winuser", "memoryapi", "processthreadsapi", "handleapi", "synchapi", "libloaderapi", "minwindef", "winnt", "errhandlingapi", "winbase", "namedpipeapi", "tlhelp32", "psapi", "fileapi"] }
+winapi = { version = "0.3", features = ["winuser", "memoryapi", "processthreadsapi", "handleapi", "synchapi", "libloaderapi", "minwindef", "winnt", "errhandlingapi", "winbase", "namedpipeapi", "sysinfoapi", "tlhelp32", "psapi", "fileapi"] }
 once_cell = "1"
 il2cpp-bridge-rs = { path = "il2cpp-bridge-rs" }
 

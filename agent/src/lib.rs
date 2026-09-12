@@ -18,6 +18,8 @@ use agent_ipc::{ipc_server_main, ActionRequest, ActionResponse};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 mod agent_ipc;
+#[cfg(windows)]
+mod alog;
 
 #[cfg(windows)]
 mod formation;
@@ -46,9 +48,9 @@ extern "system" fn DllMain(_hinst: *mut core::ffi::c_void, reason: u32, _reserve
         DLL_PROCESS_ATTACH => {
             // Start the IPC server immediately so the host can verify injection
             // with a ping right away. il2cpp readiness + main-thread hook are
-            // established lazily on the first real action (see handle_request),
-            // and each action also retries the hook install.
+            // established lazily on the first real action (see handle_request).
             std::thread::spawn(|| {
+                alog::info("agent thread up, starting pipe server");
                 ipc_server_main(handle_request, &SHUTDOWN);
             });
             1
@@ -62,17 +64,32 @@ extern "system" fn DllMain(_hinst: *mut core::ffi::c_void, reason: u32, _reserve
 }
 
 #[cfg(windows)]
+#[cfg(windows)]
 fn handle_request(req: ActionRequest) -> ActionResponse {
+    alog::info(&format!("request: {:?}", req));
     // Lazily bring up the bridge + the main-thread pump on first contact.
     if !matches!(req, ActionRequest::Ping) {
         if !UNITY_READY.load(Ordering::SeqCst) {
-            if unity_thread::install() {
+            let installed = unity_thread::install();
+            alog::info(&format!("unity hook install: {}", installed));
+            if installed {
                 UNITY_READY.store(true, Ordering::SeqCst);
             }
         }
     }
+    let response = run_action(req);
+    alog::info(&format!("response: {:?}", response));
+    response
+}
+
+#[cfg(windows)]
+fn run_action(req: ActionRequest) -> ActionResponse {
     match req {
         ActionRequest::Ping => ActionResponse::Ok("pong".into()),
+        ActionRequest::LogDir(dir) => {
+            alog::set_base_dir(&dir);
+            ActionResponse::Ok("logdir set".into())
+        }
         ActionRequest::Formation { index } => match formation::set_formation(index) {
             Ok(()) => ActionResponse::Ok(format!("formation {}", index)),
             Err(e) => ActionResponse::Err(e),
@@ -89,6 +106,19 @@ fn handle_request(req: ActionRequest) -> ActionResponse {
             Ok(()) => ActionResponse::Ok("switch_account".into()),
             Err(e) => ActionResponse::Err(e),
         },
+    }
+}
+
+/// Host calls this right after injection so agent logs land next to lmplus.exe.
+#[cfg(windows)]
+#[no_mangle]
+pub extern "system" fn lmp_set_log_dir(dir: *const i8) {
+    if dir.is_null() {
+        return;
+    }
+    let cstr = unsafe { std::ffi::CStr::from_ptr(dir) };
+    if let Ok(dir) = cstr.to_str() {
+        alog::set_base_dir(dir);
     }
 }
 
